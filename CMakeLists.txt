@@ -14,8 +14,12 @@ include(dusklight/cmake/ModSDK.cmake)
 add_mod(tp_multiplayer_mod
     MOD_JSON mod.json
     FEATURES game
-    SOURCES src/main.cpp
+    SOURCES 
+        src/main.cpp
+        src/network/PacketSerializer.cpp
+        src/game/ActorInterface.cpp
 )
 
-# ENet ya está expuesto gracias a tu modificación en dusklight/CMakeLists.txt
+add_subdirectory(extern/enet)
+target_include_directories(enet PUBLIC extern/enet/include)
 target_link_libraries(tp_multiplayer_mod PRIVATE enet)
