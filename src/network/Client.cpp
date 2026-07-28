@@ -9,10 +9,11 @@ Client::~Client() {
 }
 
 bool Client::Connect(const std::string& hostName, uint16_t port) {
-    m_client = enet_host_create(nullptr, 1, 2, 0, 0);
     if (!m_client) {
-        std::cerr << "Failed to create ENet client host!\n";
-        return false;
+        m_client = enet_host_create(nullptr, 1, 2, 0, 0);
+        if (!m_client) {
+            return false;
+        }
     }
 
     ENetAddress address;
@@ -21,12 +22,14 @@ bool Client::Connect(const std::string& hostName, uint16_t port) {
 
     m_peer = enet_host_connect(m_client, &address, 2, 0);
     if (!m_peer) {
-        std::cerr << "No available peers for initiating an ENet connection.\n";
         return false;
     }
 
+    // Increase timeout to 60 seconds to survive long map loading screens
+    enet_peer_timeout(m_peer, 0, 0, 60000);
+
     ENetEvent event;
-    if (enet_host_service(m_client, &event, 5000) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
+    if (enet_host_service(m_client, &event, 100) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
         m_connected = true;
         return true;
     }

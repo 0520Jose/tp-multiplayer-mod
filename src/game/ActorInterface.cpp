@@ -33,21 +33,18 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
 void PlayerSync::SpawnRemotePlayer() {
     if (m_remotePlayer) return;
 
-    cXyz spawnPos = {0.0f, 0.0f, 0.0f};
-    csXyz spawnRot = {0, 0, 0};
-    int roomNo = 0;
-
     m_player = dComIfGp_getPlayer(0);
-    if (m_player) {
-        spawnPos = m_player->current.pos;
-        spawnRot = m_player->current.angle;
-        roomNo = m_player->current.roomNo;
+    if (!m_player) {
+        return; // Wait until local player is in the game before spawning remote player
     }
 
-    // Try to spawn another Link or a dummy NPC
-    // Wait, fpcNm_ALINK_e might crash if duplicated. We'll use ALINK for now, 
-    // but a common dummy is an NPC. We will leave it as ALINK so it looks like the player.
-    m_remotePlayer = fopAcM_fastCreate(fpcNm_ALINK_e, 0, &spawnPos, roomNo, &spawnRot, nullptr, -1, nullptr, nullptr);
+    cXyz spawnPos = m_player->current.pos;
+    csXyz spawnRot = m_player->current.angle;
+    int roomNo = m_player->current.roomNo;
+
+    // Temporarily disabled to prevent crashes!
+    // m_remotePlayer = fopAcM_fastCreate(fpcNm_ITEM_e, 0, &spawnPos, roomNo, &spawnRot, nullptr, -1, nullptr, nullptr);
+    m_remotePlayer = nullptr;
 }
 
 void PlayerSync::ApplyRemotePosition(float x, float y, float z, float rotY) {

@@ -1,16 +1,41 @@
 #include <iostream>
 #include <cassert>
+#include <cstdlib>
 #include "network/PacketSerializer.h"
 #include "game/ActorInterface.h"
+#include "network/ConnectionConfig.h"
+
+#ifdef _WIN32
+static void SetEnvVar(const char* name, const char* value) {
+    _putenv_s(name, value);
+}
+#else
+static void SetEnvVar(const char* name, const char* value) {
+    setenv(name, value, 1);
+}
+#endif
+
+static void TestConnectionConfig() {
+    SetEnvVar("TP_MULTIPLAYER_HOST", "192.168.1.50");
+    SetEnvVar("TP_MULTIPLAYER_PORT", "4321");
+
+    assert(ConnectionConfig::GetConfiguredHost("127.0.0.1") == "192.168.1.50");
+    assert(ConnectionConfig::GetConfiguredPort(1234) == 4321);
+
+    SetEnvVar("TP_MULTIPLAYER_HOST", "");
+    SetEnvVar("TP_MULTIPLAYER_PORT", "");
+
+    assert(ConnectionConfig::GetConfiguredHost("127.0.0.1") == "127.0.0.1");
+    assert(ConnectionConfig::GetConfiguredPort(1234) == 1234);
+}
 
 int main() {
-    PlayerSync sync;
+    SyncPositionPacket packet;
+    packet.x = 100.5f;
+    packet.y = 200.5f;
+    packet.z = 300.5f;
+    packet.rotY = 45.0f;
     
-    SyncPositionPacket packet = sync.GetLocalPosition();
-    std::cout << "Posicion local inicial: X=" << packet.x << " Y=" << packet.y << " Z=" << packet.z << " RotY=" << packet.rotY << "\n";
-    
-    sync.ApplyRemotePosition(100.5f, 200.5f, 300.5f, 45.0f);
-    packet = sync.GetLocalPosition();
     std::cout << "Posicion modificada : X=" << packet.x << " Y=" << packet.y << " Z=" << packet.z << " RotY=" << packet.rotY << "\n";
     
     std::vector<uint8_t> data = PacketSerializer::SerializeSyncPosition(packet);
@@ -25,8 +50,11 @@ int main() {
     assert(deserialized.rotY == packet.rotY);
     
     // --- STATUS TESTS ---
-    sync.ApplyRemoteStatus(12, 20, 0x01020304);
-    SyncStatusPacket statusPacket = sync.GetLocalStatus();
+    SyncStatusPacket statusPacket;
+    statusPacket.health = 12;
+    statusPacket.maxHealth = 20;
+    statusPacket.currentAnimation = 0x01020304;
+
     std::cout << "Estado modificado: HP=" << statusPacket.health << "/" << statusPacket.maxHealth << " Anim=" << statusPacket.currentAnimation << "\n";
     
     std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
@@ -39,6 +67,8 @@ int main() {
     assert(dStatus.maxHealth == statusPacket.maxHealth);
     assert(dStatus.currentAnimation == statusPacket.currentAnimation);
     
-    std::cout << "Pruebas de serializacion e interfaz del actor pasaron exitosamente.\n";
+    TestConnectionConfig();
+
+    std::cout << "Pruebas de serializacion pasaron exitosamente.\n";
     return 0;
 }

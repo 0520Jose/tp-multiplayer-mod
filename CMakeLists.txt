@@ -17,9 +17,24 @@ add_mod(tp_multiplayer_mod
     SOURCES 
         src/main.cpp
         src/network/PacketSerializer.cpp
+        src/network/Client.cpp
         src/game/ActorInterface.cpp
 )
 
 add_subdirectory(extern/enet)
 target_include_directories(enet PUBLIC extern/enet/include)
+
+# Executable for unit testing
+add_executable(test_main src/test_main.cpp src/network/PacketSerializer.cpp)
+target_include_directories(test_main PRIVATE src)
+if(WIN32)
+    target_link_libraries(test_main PRIVATE ws2_32)
+endif()
+
+# Executable for testing the server (dummy player simulation)
+add_executable(server_simulator src/server_simulator.cpp src/network/PacketSerializer.cpp)
+target_include_directories(server_simulator PRIVATE src)
+target_link_libraries(server_simulator PRIVATE enet)
+
 target_link_libraries(tp_multiplayer_mod PRIVATE enet)
+target_include_directories(tp_multiplayer_mod PRIVATE ${CMAKE_BINARY_DIR}/_deps/tracy-src/public)
