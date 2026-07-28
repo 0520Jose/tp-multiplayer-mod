@@ -11,7 +11,7 @@ public:
     
     bool Connect(const std::string& hostName, uint16_t port);
     void Disconnect();
-    void Update();
+    std::vector<std::vector<uint8_t>> Update();
     void Send(const std::vector<uint8_t>& data);
     bool IsConnected() const;
 

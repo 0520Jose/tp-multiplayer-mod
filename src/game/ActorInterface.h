@@ -2,15 +2,7 @@
 #include "../network/NetworkTypes.h"
 #include <cstdint>
 
-struct fopAc_ac_c {
-    float x;
-    float y;
-    float z;
-    float rotY;
-    int16_t health;
-    int16_t maxHealth;
-    uint32_t animationId;
-};
+struct fopAc_ac_c;
 
 class PlayerSync {
 public:

@@ -57,15 +57,19 @@ void Client::Disconnect() {
     m_connected = false;
 }
 
-void Client::Update() {
-    if (!m_client) return;
+std::vector<std::vector<uint8_t>> Client::Update() {
+    std::vector<std::vector<uint8_t>> packets;
+    if (!m_client) return packets;
 
     ENetEvent event;
     while (enet_host_service(m_client, &event, 0) > 0) {
         switch (event.type) {
-            case ENET_EVENT_TYPE_RECEIVE:
+            case ENET_EVENT_TYPE_RECEIVE: {
+                std::vector<uint8_t> data(event.packet->data, event.packet->data + event.packet->dataLength);
+                packets.push_back(data);
                 enet_packet_destroy(event.packet);
                 break;
+            }
             case ENET_EVENT_TYPE_DISCONNECT:
                 m_connected = false;
                 m_peer = nullptr;
@@ -74,6 +78,7 @@ void Client::Update() {
                 break;
         }
     }
+    return packets;
 }
 
 void Client::Send(const std::vector<uint8_t>& data) {

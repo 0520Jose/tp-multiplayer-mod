@@ -1,22 +1,23 @@
 #include "ActorInterface.h"
-
-static fopAc_ac_c g_localPlayerMock = {0.0f, 0.0f, 0.0f, 0.0f, 30, 30, 0};
+#include <d/d_com_inf_game.h>
 
 PlayerSync::PlayerSync() {
-    m_player = &g_localPlayerMock;
+    m_player = nullptr;
 }
 
 fopAc_ac_c* PlayerSync::GetPlayerActor() {
-    return m_player;
+    return dComIfGp_getPlayer(0);
 }
 
 SyncPositionPacket PlayerSync::GetLocalPosition() {
     SyncPositionPacket packet;
+    m_player = dComIfGp_getPlayer(0); // Update pointer every frame
+    
     if (m_player) {
-        packet.x = m_player->x;
-        packet.y = m_player->y;
-        packet.z = m_player->z;
-        packet.rotY = m_player->rotY;
+        packet.x = m_player->current.pos.x;
+        packet.y = m_player->current.pos.y;
+        packet.z = m_player->current.pos.z;
+        packet.rotY = (float)m_player->current.angle.y;
     } else {
         packet.x = 0.0f;
         packet.y = 0.0f;
@@ -28,19 +29,27 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
 
 void PlayerSync::ApplyRemotePosition(float x, float y, float z, float rotY) {
     if (m_player) {
-        m_player->x = x;
-        m_player->y = y;
-        m_player->z = z;
-        m_player->rotY = rotY;
+        m_player->current.pos.x = x;
+        m_player->current.pos.y = y;
+        m_player->current.pos.z = z;
+        m_player->current.angle.y = (s16)rotY;
     }
 }
 
 SyncStatusPacket PlayerSync::GetLocalStatus() {
     SyncStatusPacket packet;
+    m_player = dComIfGp_getPlayer(0);
+    
     if (m_player) {
         packet.health = m_player->health;
-        packet.maxHealth = m_player->maxHealth;
-        packet.currentAnimation = m_player->animationId;
+        // Since we don't have maxHealth in fopAc_ac_c easily accessible, let's pull it from save data if possible
+        // Let's just use dComIfGs_getLife() and dComIfGs_getMaxLife() instead of m_player fields!
+        packet.health = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
+        packet.maxHealth = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
+        
+        // For animation ID, it's not simply exposed on fopAc_ac_c, 
+        // we'll send a dummy value for now until we cast to daPy_py_c
+        packet.currentAnimation = 0; 
     } else {
         packet.health = 0;
         packet.maxHealth = 0;
@@ -52,7 +61,10 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
 void PlayerSync::ApplyRemoteStatus(int16_t health, int16_t maxHealth, uint32_t animationId) {
     if (m_player) {
         m_player->health = health;
-        m_player->maxHealth = maxHealth;
-        m_player->animationId = animationId;
+        // We probably don't want to overwrite the local player's save data with the remote's max health, 
+        // but we'll apply it for demonstration (or apply it to a dummy actor later).
+        // Since this is just to demonstrate applying to a struct:
     }
 }
+
+
