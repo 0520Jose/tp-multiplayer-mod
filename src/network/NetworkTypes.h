@@ -7,3 +7,9 @@ struct SyncPositionPacket {
     float z;
     float rotY;
 };
+
+struct SyncStatusPacket {
+    int16_t health;
+    int16_t maxHealth;
+    uint32_t currentAnimation;
+};

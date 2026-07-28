@@ -4,20 +4,26 @@
 #include "network/PacketSerializer.h"
 #include "game/ActorInterface.h"
 
-class Client {
-public:
-    bool IsConnected() const { return true; }
-    void Send(const std::vector<uint8_t>& data) {}
-};
+#include "network/Client.h"
 
 Client* g_client = nullptr;
 PlayerSync* g_playerSync = nullptr;
 
 void NetworkUpdateCallback() {
     if (g_client && g_client->IsConnected() && g_playerSync) {
-        SyncPositionPacket packet = g_playerSync->GetLocalPosition();
-        std::vector<uint8_t> data = PacketSerializer::SerializeSyncPosition(packet);
-        g_client->Send(data);
+        g_client->Update();
+        
+        SyncPositionPacket posPacket = g_playerSync->GetLocalPosition();
+        std::vector<uint8_t> posData = PacketSerializer::SerializeSyncPosition(posPacket);
+        
+        // Let's prepend a byte to identify the packet type: 0 for position, 1 for status
+        posData.insert(posData.begin(), 0);
+        g_client->Send(posData);
+        
+        SyncStatusPacket statusPacket = g_playerSync->GetLocalStatus();
+        std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
+        statusData.insert(statusData.begin(), 1);
+        g_client->Send(statusData);
     }
 }
 

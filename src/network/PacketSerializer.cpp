@@ -61,3 +61,39 @@ SyncPositionPacket PacketSerializer::DeserializeSyncPosition(const std::vector<u
 
     return packet;
 }
+
+std::vector<uint8_t> PacketSerializer::SerializeSyncStatus(const SyncStatusPacket& packet) {
+    std::vector<uint8_t> data(8);
+    uint16_t health = htons(packet.health);
+    uint16_t maxHealth = htons(packet.maxHealth);
+    uint32_t anim = htonl(packet.currentAnimation);
+    
+    std::memcpy(data.data(), &health, 2);
+    std::memcpy(data.data() + 2, &maxHealth, 2);
+    std::memcpy(data.data() + 4, &anim, 4);
+    
+    return data;
+}
+
+SyncStatusPacket PacketSerializer::DeserializeSyncStatus(const std::vector<uint8_t>& data) {
+    SyncStatusPacket packet;
+    if (data.size() < 8) {
+        packet.health = 0;
+        packet.maxHealth = 0;
+        packet.currentAnimation = 0;
+        return packet;
+    }
+    
+    uint16_t health, maxHealth;
+    uint32_t anim;
+    
+    std::memcpy(&health, data.data(), 2);
+    std::memcpy(&maxHealth, data.data() + 2, 2);
+    std::memcpy(&anim, data.data() + 4, 4);
+    
+    packet.health = ntohs(health);
+    packet.maxHealth = ntohs(maxHealth);
+    packet.currentAnimation = ntohl(anim);
+    
+    return packet;
+}

@@ -7,6 +7,9 @@ struct fopAc_ac_c {
     float y;
     float z;
     float rotY;
+    int16_t health;
+    int16_t maxHealth;
+    uint32_t animationId;
 };
 
 class PlayerSync {
@@ -15,6 +18,9 @@ public:
     fopAc_ac_c* GetPlayerActor();
     SyncPositionPacket GetLocalPosition();
     void ApplyRemotePosition(float x, float y, float z, float rotY);
+    
+    SyncStatusPacket GetLocalStatus();
+    void ApplyRemoteStatus(int16_t health, int16_t maxHealth, uint32_t animationId);
 private:
     fopAc_ac_c* m_player;
 };
