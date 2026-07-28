@@ -23,9 +23,7 @@ void NetworkUpdateCallback() {
             if (type == 0) {
                 // Position packet
                 SyncPositionPacket p = PacketSerializer::DeserializeSyncPosition(payload);
-                // TODO: Apply this to a spawned dummy/remote actor!
-                // For now we just call it on the local player (which will make you teleport if you receive it)
-                // In a real scenario, you'd call this on g_remotePlayerSync->ApplyRemotePosition(...)
+                // Apply this to the spawned remote actor
                 g_playerSync->ApplyRemotePosition(p.x, p.y, p.z, p.rotY);
             } else if (type == 1) {
                 // Status packet

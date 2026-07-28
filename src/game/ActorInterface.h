@@ -13,6 +13,9 @@ public:
     
     SyncStatusPacket GetLocalStatus();
     void ApplyRemoteStatus(int16_t health, int16_t maxHealth, uint32_t animationId);
+    
+    void SpawnRemotePlayer();
 private:
     fopAc_ac_c* m_player;
+    fopAc_ac_c* m_remotePlayer;
 };

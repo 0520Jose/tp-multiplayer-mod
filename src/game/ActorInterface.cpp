@@ -1,8 +1,11 @@
 #include "ActorInterface.h"
 #include <d/d_com_inf_game.h>
+#include <f_pc/f_pc_name.h>
+#include <f_op/f_op_actor_mng.h>
 
 PlayerSync::PlayerSync() {
     m_player = nullptr;
+    m_remotePlayer = nullptr;
 }
 
 fopAc_ac_c* PlayerSync::GetPlayerActor() {
@@ -27,12 +30,36 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
     return packet;
 }
 
-void PlayerSync::ApplyRemotePosition(float x, float y, float z, float rotY) {
+void PlayerSync::SpawnRemotePlayer() {
+    if (m_remotePlayer) return;
+
+    cXyz spawnPos = {0.0f, 0.0f, 0.0f};
+    csXyz spawnRot = {0, 0, 0};
+    int roomNo = 0;
+
+    m_player = dComIfGp_getPlayer(0);
     if (m_player) {
-        m_player->current.pos.x = x;
-        m_player->current.pos.y = y;
-        m_player->current.pos.z = z;
-        m_player->current.angle.y = (s16)rotY;
+        spawnPos = m_player->current.pos;
+        spawnRot = m_player->current.angle;
+        roomNo = m_player->current.roomNo;
+    }
+
+    // Try to spawn another Link or a dummy NPC
+    // Wait, fpcNm_ALINK_e might crash if duplicated. We'll use ALINK for now, 
+    // but a common dummy is an NPC. We will leave it as ALINK so it looks like the player.
+    m_remotePlayer = fopAcM_fastCreate(fpcNm_ALINK_e, 0, &spawnPos, roomNo, &spawnRot, nullptr, -1, nullptr, nullptr);
+}
+
+void PlayerSync::ApplyRemotePosition(float x, float y, float z, float rotY) {
+    if (!m_remotePlayer) {
+        SpawnRemotePlayer();
+    }
+    
+    if (m_remotePlayer) {
+        m_remotePlayer->current.pos.x = x;
+        m_remotePlayer->current.pos.y = y;
+        m_remotePlayer->current.pos.z = z;
+        m_remotePlayer->current.angle.y = (s16)rotY;
     }
 }
 
@@ -59,11 +86,10 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
 }
 
 void PlayerSync::ApplyRemoteStatus(int16_t health, int16_t maxHealth, uint32_t animationId) {
-    if (m_player) {
-        m_player->health = health;
-        // We probably don't want to overwrite the local player's save data with the remote's max health, 
-        // but we'll apply it for demonstration (or apply it to a dummy actor later).
-        // Since this is just to demonstrate applying to a struct:
+    if (m_remotePlayer) {
+        m_remotePlayer->health = health;
+        // Animation syncing will require casting to daPy_py_c and calling changeDemoMoveAngle or similar,
+        // which we can expand on later once we verify the actor spawned successfully.
     }
 }
 
