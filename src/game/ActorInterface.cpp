@@ -1,12 +1,23 @@
 #include "ActorInterface.h"
+#include <algorithm>
+#include <cmath>
 #include <d/d_com_inf_game.h>
+#include <dolphin/gx/GXAurora.h>
 #include <f_pc/f_pc_name.h>
 #include <f_op/f_op_actor_mng.h>
+#include <m_Do/m_Do_mtx.h>
+#include <JSystem/JParticle/JPAEmitter.h>
 
 PlayerSync::PlayerSync() {
     m_player = nullptr;
     m_remotePlayer = nullptr;
+    m_remotePosition = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_hasRemotePosition = false;
+    m_remoteHealth = 0;
+    m_remoteMaxHealth = 1;
 }
+
+PlayerSync::~PlayerSync() {}
 
 fopAc_ac_c* PlayerSync::GetPlayerActor() {
     return dComIfGp_getPlayer(0);
@@ -31,33 +42,12 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
 }
 
 void PlayerSync::SpawnRemotePlayer() {
-    if (m_remotePlayer) return;
-
-    m_player = dComIfGp_getPlayer(0);
-    if (!m_player) {
-        return; // Wait until local player is in the game before spawning remote player
-    }
-
-    cXyz spawnPos = m_player->current.pos;
-    csXyz spawnRot = m_player->current.angle;
-    int roomNo = m_player->current.roomNo;
-
-    // Temporarily disabled to prevent crashes!
-    // m_remotePlayer = fopAcM_fastCreate(fpcNm_ITEM_e, 0, &spawnPos, roomNo, &spawnRot, nullptr, -1, nullptr, nullptr);
-    m_remotePlayer = nullptr;
+    // Disabled to prevent actor manager crashes
 }
 
-void PlayerSync::ApplyRemotePosition(float x, float y, float z, float rotY) {
-    if (!m_remotePlayer) {
-        SpawnRemotePlayer();
-    }
-    
-    if (m_remotePlayer) {
-        m_remotePlayer->current.pos.x = x;
-        m_remotePlayer->current.pos.y = y;
-        m_remotePlayer->current.pos.z = z;
-        m_remotePlayer->current.angle.y = (s16)rotY;
-    }
+void PlayerSync::ApplyRemotePosition(const SyncPositionPacket& posData) {
+    m_remotePosition = posData;
+    m_hasRemotePosition = true;
 }
 
 SyncStatusPacket PlayerSync::GetLocalStatus() {
@@ -65,14 +55,8 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
     m_player = dComIfGp_getPlayer(0);
     
     if (m_player) {
-        packet.health = m_player->health;
-        // Since we don't have maxHealth in fopAc_ac_c easily accessible, let's pull it from save data if possible
-        // Let's just use dComIfGs_getLife() and dComIfGs_getMaxLife() instead of m_player fields!
         packet.health = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
         packet.maxHealth = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
-        
-        // For animation ID, it's not simply exposed on fopAc_ac_c, 
-        // we'll send a dummy value for now until we cast to daPy_py_c
         packet.currentAnimation = 0; 
     } else {
         packet.health = 0;
@@ -83,11 +67,32 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
 }
 
 void PlayerSync::ApplyRemoteStatus(int16_t health, int16_t maxHealth, uint32_t animationId) {
-    if (m_remotePlayer) {
-        m_remotePlayer->health = health;
-        // Animation syncing will require casting to daPy_py_c and calling changeDemoMoveAngle or similar,
-        // which we can expand on later once we verify the actor spawned successfully.
-    }
+    m_remoteHealth = health;
+    m_remoteMaxHealth = (maxHealth > 0) ? maxHealth : 1;
 }
 
+void PlayerSync::RenderRemotePlayer3D() {
+    if (m_hasRemotePosition) {
+        cXyz pos;
+        pos.x = m_remotePosition.x;
+        pos.y = m_remotePosition.y + 100.0f; // Raise it slightly so it doesn't clip into the ground
+        pos.z = m_remotePosition.z;
+
+        if (!m_remoteEmitter) {
+            // ID_ZF_J_FAIRY00_GLOW is 0x72F
+            m_remoteEmitter = dComIfGp_particle_set(0x72F, &pos, nullptr, nullptr);
+            if (!m_remoteEmitter) {
+                // Try a different fairy particle if first fails
+                m_remoteEmitter = dComIfGp_particle_set(0x01A, &pos, nullptr, nullptr); // ID_AK_JN_CUREFAIRY00
+            }
+            if (m_remoteEmitter) {
+                m_remoteEmitter->becomeImmortalEmitter();
+            }
+        }
+
+        if (m_remoteEmitter) {
+            m_remoteEmitter->setGlobalTranslation(pos.x, pos.y, pos.z);
+        }
+    }
+}
 

@@ -10,43 +10,41 @@
 Client* g_client = nullptr;
 PlayerSync* g_playerSync = nullptr;
 
-void NetworkUpdateCallback() {
+void NetworkPumpCallback() {
     if (!g_client || !g_playerSync) return;
 
     if (!g_client->IsConnected()) {
         static int connectCooldown = 0;
         if (connectCooldown <= 0) {
-            // Try connecting (very low timeout to avoid freezing)
             const std::string host = ConnectionConfig::GetConfiguredHost("127.0.0.1");
             const uint16_t port = ConnectionConfig::GetConfiguredPort(1234);
             g_client->Connect(host, port);
-            connectCooldown = 60; // Wait ~1 second before trying again (assuming 60fps)
+            connectCooldown = 60; 
         } else {
             connectCooldown--;
         }
         return;
     }
 
-    // --- 1. RECEIVE AND PROCESS REMOTE PACKETS ---
     auto packets = g_client->Update();
     for (const auto& data : packets) {
         if (data.empty()) continue;
         uint8_t type = data[0];
         
-        // Remove the type byte before deserialization
         std::vector<uint8_t> payload(data.begin() + 1, data.end());
         
         if (type == 0) {
-            // Position packet
-            SyncPositionPacket p = PacketSerializer::DeserializeSyncPosition(payload);
-            // Apply this to the spawned remote actor
-            g_playerSync->ApplyRemotePosition(p.x, p.y, p.z, p.rotY);
+            SyncPositionPacket posData = PacketSerializer::DeserializeSyncPosition(payload);
+            g_playerSync->ApplyRemotePosition(posData);
         } else if (type == 1) {
-            // Status packet
             SyncStatusPacket s = PacketSerializer::DeserializeSyncStatus(payload);
             g_playerSync->ApplyRemoteStatus(s.health, s.maxHealth, s.currentAnimation);
         }
     }
+}
+
+void PlayerSyncCallback() {
+    if (!g_client || !g_client->IsConnected() || !g_playerSync) return;
     
     // --- 2. SEND LOCAL STATE TO SERVER ---
     SyncPositionPacket posPacket = g_playerSync->GetLocalPosition();
@@ -86,7 +84,28 @@ extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
 }
 
 extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
-    NetworkUpdateCallback();
+    NetworkPumpCallback();
+    
+    // Use a delay to ensure the game is completely loaded and we aren't in a loading screen
+    static int framesSincePlayerLoaded = 0;
+    
+    // We check if the player actor is not null. It's safe to call here.
+    if (g_playerSync && g_playerSync->GetPlayerActor() != nullptr) {
+        framesSincePlayerLoaded++;
+        // Wait 120 frames (~4 seconds at 30fps) after player becomes valid before interacting with ActorManager
+        if (framesSincePlayerLoaded > 120) {
+            PlayerSyncCallback();
+            if (g_playerSync) {
+                g_playerSync->RenderRemotePlayer3D();
+            }
+        }
+    } else {
+        framesSincePlayerLoaded = 0;
+        if (g_playerSync) {
+            g_playerSync->ResetEmitter();
+        }
+    }
+    
     return MOD_OK;
 }
 

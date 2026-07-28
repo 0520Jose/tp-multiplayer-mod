@@ -1,7 +1,7 @@
 #include <enet/enet.h>
 #include <iostream>
 #include <vector>
-#include <cmath>
+#include <map>
 #include <thread>
 #include <chrono>
 #include "network/PacketSerializer.h"
@@ -26,76 +26,39 @@ int main() {
         return 1;
     }
 
-    std::cout << "Test Server running on port " << port << "...\n";
-    std::cout << "Waiting for connections...\n";
+    std::cout << "===========================================\n";
+    std::cout << " TWILIGHT PRINCESS MULTIPLAYER DEDICATED SERVER\n";
+    std::cout << " Running on port " << port << "...\n";
+    std::cout << " Waiting for heroes to connect...\n";
+    std::cout << "===========================================\n";
 
     ENetEvent event;
-    ENetPeer* connectedPeer = nullptr;
-
-    float t = 0.0f;
-    SyncPositionPacket lastPos = {0.0f, 0.0f, 0.0f, 0.0f};
 
     while (true) {
-        while (enet_host_service(server, &event, 10) > 0) {
+        while (enet_host_service(server, &event, 15) > 0) {
             switch (event.type) {
                 case ENET_EVENT_TYPE_CONNECT:
-                    std::cout << "A new client connected from " << event.peer->address.host << ":" << event.peer->address.port << ".\n";
-                    connectedPeer = event.peer;
+                    std::cout << "[+] A new hero connected! (Total: " << server->connectedPeers << ")\n";
                     break;
                 case ENET_EVENT_TYPE_RECEIVE: {
-                    // Update base position based on client
-                    if (event.packet->dataLength > 0 && event.packet->data[0] == 0) {
-                        std::vector<uint8_t> payload(event.packet->data + 1, event.packet->data + event.packet->dataLength);
-                        lastPos = PacketSerializer::DeserializeSyncPosition(payload);
-                        std::cout << "Received player position: X=" << lastPos.x << ", Y=" << lastPos.y << ", Z=" << lastPos.z << "\n";
+                    // Broadcast this packet to ALL other connected clients
+                    for (size_t i = 0; i < server->peerCount; ++i) {
+                        ENetPeer* targetPeer = &server->peers[i];
+                        if (targetPeer->state == ENET_PEER_STATE_CONNECTED && targetPeer != event.peer) {
+                            ENetPacket* packetCopy = enet_packet_create(event.packet->data, event.packet->dataLength, event.packet->flags);
+                            enet_peer_send(targetPeer, 0, packetCopy);
+                        }
                     }
                     enet_packet_destroy(event.packet);
                     break;
                 }
                 case ENET_EVENT_TYPE_DISCONNECT:
-                    std::cout << "Client disconnected.\n";
-                    connectedPeer = nullptr;
+                    std::cout << "[-] A hero disconnected. (Remaining: " << server->connectedPeers << ")\n";
                     break;
                 default:
                     break;
             }
         }
-
-        if (connectedPeer) {
-            // Generate dummy movement: Circle around the player
-            t += 0.05f;
-            float dummyX = lastPos.x + std::cos(t) * 500.0f; // 500 units radius
-            float dummyZ = lastPos.z + std::sin(t) * 500.0f;
-            float dummyY = lastPos.y; // Same height
-            float dummyRot = t * 10000.0f; // Spin
-
-            SyncPositionPacket p;
-            p.x = dummyX;
-            p.y = dummyY;
-            p.z = dummyZ;
-            p.rotY = dummyRot;
-
-            std::vector<uint8_t> payload = PacketSerializer::SerializeSyncPosition(p);
-            payload.insert(payload.begin(), 0); // Type 0 = Position
-
-            ENetPacket* packet = enet_packet_create(payload.data(), payload.size(), ENET_PACKET_FLAG_RELIABLE);
-            enet_peer_send(connectedPeer, 0, packet);
-
-            // Also send health status
-            SyncStatusPacket s;
-            s.health = 12; // 3 hearts
-            s.maxHealth = 12;
-            s.currentAnimation = 0;
-            
-            std::vector<uint8_t> sPayload = PacketSerializer::SerializeSyncStatus(s);
-            sPayload.insert(sPayload.begin(), 1); // Type 1 = Status
-
-            ENetPacket* sPacket = enet_packet_create(sPayload.data(), sPayload.size(), ENET_PACKET_FLAG_RELIABLE);
-            enet_peer_send(connectedPeer, 0, sPacket);
-        }
-
-        // Run at ~60fps
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
     enet_host_destroy(server);
