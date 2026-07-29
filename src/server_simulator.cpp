@@ -49,6 +49,35 @@ int main() {
                             enet_peer_send(targetPeer, 0, packetCopy);
                         }
                     }
+
+                    // --- SIMULATION HACK FOR TESTING ---
+                    // If the user is alone, echo their packet back with an offset to simulate a second player
+                    if (server->connectedPeers == 1 && event.packet->dataLength > 0) {
+                        uint8_t type = event.packet->data[0];
+                        // Position packet: 1 byte type + 16 bytes SyncPositionPacket
+                        if (type == 0 && event.packet->dataLength == 17) {
+                            std::vector<uint8_t> payload(event.packet->data + 1, event.packet->data + event.packet->dataLength);
+                            SyncPositionPacket posData = PacketSerializer::DeserializeSyncPosition(payload);
+                            
+                            // Offset position to make the "friend" appear slightly ahead/aside
+                            posData.x += 150.0f;
+                            posData.z += 150.0f;
+                            
+                            std::vector<uint8_t> newPayload = PacketSerializer::SerializeSyncPosition(posData);
+                            newPayload.insert(newPayload.begin(), 0);
+                            
+                            ENetPacket* echoPacket = enet_packet_create(newPayload.data(), newPayload.size(), event.packet->flags);
+                            enet_peer_send(event.peer, 0, echoPacket);
+                        }
+                        // Status packet: 1 byte type + 8 bytes SyncStatusPacket
+                        else if (type == 1 && event.packet->dataLength == 9) {
+                            // We can just echo status verbatim so the fake player has the same animation/health
+                            ENetPacket* echoPacket = enet_packet_create(event.packet->data, event.packet->dataLength, event.packet->flags);
+                            enet_peer_send(event.peer, 0, echoPacket);
+                        }
+                    }
+                    // -----------------------------------
+
                     enet_packet_destroy(event.packet);
                     break;
                 }

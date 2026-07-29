@@ -1,8 +1,14 @@
+#define NOMINMAX
 #include <enet/enet.h>
 #include <mods/api.h>
 #include <iostream>
 #include "network/PacketSerializer.h"
 #include "game/ActorInterface.h"
+#include <mods/hook.hpp>
+#include <mods/svc/log.h>
+#include <cstdio>
+#include <fstream>
+#include <m_Do/m_Do_ext.h>
 
 #include "network/Client.h"
 #include "network/ConnectionConfig.h"
@@ -56,21 +62,46 @@ void PlayerSyncCallback() {
     std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
     statusData.insert(statusData.begin(), 1); // Type 1 = Status
     g_client->Send(statusData);
+    
+    // Process the fairy particles (safe alternative to 3D models)
+    g_playerSync->UpdateParticles();
 }
 
-ModContext* mod_ctx;
+bool g_isPlayerReady = false;
 
-extern "C" MOD_EXPORT const ModManifest* mod_get_manifest(void) {
-    static const ModManifest manifest = {
-        /* struct_size */ sizeof(ModManifest),
-        /* abi_version */ MOD_ABI_VERSION,
-        /* imports */ nullptr,
-        /* import_count */ 0,
-        /* exports */ nullptr,
-        /* export_count */ 0
-    };
-    return &manifest;
+void ModelUpdateDLPost(J3DModel* i_model) {
+    if (!g_playerSync || !g_isPlayerReady) return;
+    
+    // We only inject our model immediately after Link's model has been drawn
+    fopAc_ac_c* alink = g_playerSync->GetPlayerActor();
+    if (!alink) return;
+    
+    J3DModel* mpLinkModel = *(J3DModel**)((char*)alink + 0x650);
+    
+    if (i_model == mpLinkModel) {
+        g_playerSync->CreateRemoteModelIfNeeded(alink);
+        
+        J3DModel* remoteModel = g_playerSync->GetRemoteModel();
+        if (remoteModel) {
+            // Update the matrix based on remote position before drawing
+            g_playerSync->RenderRemotePlayer3D();
+            
+            // Render it using the current view projection
+            mDoExt_modelUpdateDL(remoteModel);
+        }
+    }
 }
+
+void ModelUpdateDLPost_Wrapper(ModContext* ctx, void* args, void* retval) {
+    J3DModel* i_model = *(J3DModel**)args;
+    ModelUpdateDLPost(i_model);
+}
+
+#include <mods/service.hpp>
+
+DEFINE_MOD()
+IMPORT_SERVICE(HookService, g_hooks);
+IMPORT_SERVICE(LogService, g_log);
 
 extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
     if (enet_initialize() != 0) {
@@ -79,6 +110,12 @@ extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
 
     g_client = new Client();
     g_playerSync = new PlayerSync();
+    
+    // We removed the hooks because they crashed the J3D pipeline.
+    // Wait, we are restoring them using the direct dusk API
+    if (g_hooks) {
+        // g_hooks->add_post(mod_ctx, (void*)0x80014a70, (HookPostFn)ModelUpdateDLPost_Wrapper, nullptr);
+    }
     
     return MOD_OK;
 }
@@ -89,18 +126,18 @@ extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
     // Use a delay to ensure the game is completely loaded and we aren't in a loading screen
     static int framesSincePlayerLoaded = 0;
     
-    // We check if the player actor is not null. It's safe to call here.
-    if (g_playerSync && g_playerSync->GetPlayerActor() != nullptr) {
+    // We check if the player actor is not null AND the save file is actually loaded (max health > 0)
+    if (g_playerSync && g_playerSync->GetPlayerActor() != nullptr &&
+        g_playerSync->GetLocalStatus().maxHealth > 0) {
         framesSincePlayerLoaded++;
         // Wait 120 frames (~4 seconds at 30fps) after player becomes valid before interacting with ActorManager
         if (framesSincePlayerLoaded > 120) {
+            g_isPlayerReady = true;
             PlayerSyncCallback();
-            if (g_playerSync) {
-                g_playerSync->RenderRemotePlayer3D();
-            }
         }
     } else {
         framesSincePlayerLoaded = 0;
+        g_isPlayerReady = false;
         if (g_playerSync) {
             g_playerSync->ResetEmitter();
         }
