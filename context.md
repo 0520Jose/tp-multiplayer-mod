@@ -4,31 +4,75 @@
 Este repositorio contiene un prototipo inicial de un mod multijugador para **The Legend of Zelda: Twilight Princess** ejecutado a través del motor **Dusklight**. 
 El objetivo principal de este proyecto es demostrar la viabilidad de sincronizar estados del juego a través de la red (posiciones, animaciones) inyectando código en el motor.
 
+## Arquitectura del Proyecto
+
+### Archivos Fuente
+- `src/main.cpp` — Punto de entrada del mod (lifecycle: initialize/update/shutdown)
+- `src/game/ActorInterface.h/.cpp` — Sincronización de jugadores y renderizado
+- `src/network/Client.h/.cpp` — Cliente ENet para conexión al servidor
+- `src/network/PacketSerializer.h/.cpp` — Serialización/deserialización de paquetes
+- `src/network/NetworkTypes.h` — Tipos de paquetes, structs de datos, RemotePlayerState
+- `src/network/ConnectionConfig.h` — Configuración de host/puerto vía env vars
+- `src/server_simulator.cpp` — Servidor dedicado relay
+- `src/test_main.cpp` — Tests unitarios
+
+### Protocolo de Red
+Todos los paquetes siguen el formato: `[PacketType:1][PlayerID:1][Payload:N]`
+
+| Tipo | ID | Payload | Descripción |
+|---|---|---|---|
+| PACKET_POSITION | 0 | 16 bytes (x,y,z,rotY como f32 net-order) | Sincronización de posición |
+| PACKET_STATUS | 1 | 8 bytes (health,maxHealth,animID) | Sincronización de estado |
+| PACKET_PLAYER_ASSIGN | 2 | 0 bytes (playerID en header) | Servidor asigna ID al conectar |
+| PACKET_PLAYER_DISCONNECT | 3 | 0 bytes (playerID en header) | Servidor notifica desconexión |
+
 ## Lo que se ha logrado hasta ahora
-1. **Conexión de Red UDP estable:** Se integró la librería **ENet** exitosamente dentro del ciclo de vida del juego (`mod_initialize`, `mod_update`, `mod_shutdown`).
-2. **Sistema de Servidor:** Se usa un `server_simulator.exe` que actúa como servidor maestro para aceptar conexiones y hacer eco de las coordenadas. La comunicación cliente-servidor funciona correctamente y los paquetes de posición son recibidos y procesados.
-3. **Lectura de Memoria en Vivo:** Se logró acceder de manera segura a la memoria del juego mediante la función `dComIfGp_getPlayer(0)` y leer los valores de `x, y, z` en tiempo real, así como la vida y estatus máximo.
-4. **Prevención de Cierres (Crashes) por red:**
-   - Se removieron todas las dependencias de `std::cout` en el código del cliente para evitar que la aplicación de ventana (GUI) se aborte de inmediato al imprimir.
-   - Se configuraron retardos (timeouts) en ENet para prevenir que el cliente se desconecte mientras el jugador atraviesa pantallas de carga (cambios de mapa).
+
+### Fase 1 — Red y Comunicación ✅
+1. **Conexión de Red UDP estable:** ENet integrado en el ciclo de vida del mod.
+2. **Servidor Dedicado con PlayerIDs:** El servidor asigna IDs únicos (0-254) a cada cliente y los sobreescribe en paquetes relay para prevenir spoofing.
+3. **Broadcast Multi-Cliente:** Cualquier paquete de un cliente se retransmite a todos los demás.
+4. **Modo Fantasma:** Si hay solo 1 jugador, el servidor devuelve eco con offset +150 X/Z usando playerID=200.
+5. **Auto-reconexión:** El cliente reintenta conexión automáticamente cada ~2 segundos.
+6. **Control de Tasa de Envío:** Envía a 15 Hz (cada 2 frames a 30fps) en lugar de cada frame.
+
+### Fase 2 — Lectura de Estado del Juego ✅
+1. **Lectura de posición:** Usa `dComIfGp_getPlayer(0)` con verificación de perfil (`fpcNm_ALINK_e = 0x0FD`).
+2. **Lectura de vida:** Vía `g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA()`.
+3. **Protección contra crashes:** Retardo de 120 frames después de cargar, validación de `maxHealth > 0`.
+
+### Fase 3 — Interpolación de Movimiento ✅
+1. **Interpolación lineal (lerp):** Las posiciones remotas se suavizan entre paquetes.
+2. **Interpolación de ángulo:** Usa shortest-path para rotación Y (evita giros de 360°).
+3. **Modelo de interpolación:** prevPos → targetPos con factor LERP_SPEED=0.15 por frame.
+4. **Timeout automático:** Jugadores remotos se eliminan tras 300 frames (~10s) sin actualización.
+
+### Fase 4 — Renderizado de Partículas ✅
+1. **Hada luminosa persistente:** Cada jugador remoto se muestra como partícula 0x01A.
+2. **Emitters persistentes:** Se crean una vez y se actualizan vía `JPABaseEmitter::setGlobalTranslation()`.
+3. **Indicador de dirección:** Hada pequeña al frente del jugador remoto mostrando rotación.
+4. **Limpieza segura:** Emitters se invalidan con `becomeInvalidEmitter()` en map change/disconnect.
+5. **Multi-jugador:** `std::map<uint8_t, RemotePlayerState>` soporta N jugadores simultáneos.
+
+### Fase 5 — Modelo 3D (Preparado, No Activo)
+1. **Clonación de modelo:** `mDoExt_J3DModel__create` con `J3DModelData` compartido de Link.
+2. **Para activar:** Requiere hook en pipeline de draw vía `dusk::mods::hook_add_post`.
+3. **Offset verificado:** `mpLinkModel` está en offset `0x650` de `daAlink_c` (confirmado en header).
 
 ## Problemas Resueltos y Conocimientos Clave
-- **Limitación del Port de PC vs Dolphin (GX Rendering):** Los comandos puros de gráficos GameCube/Wii directamente **NO FUNCIONAN** en el port nativo de PC (Dusklight).
-- **El problema del Maniquí (Clon del jugador):** Intentar forzar la aparición de un `ALINK` o un `TestCube` con `fopAcM_fastCreate` causa crashes por falta de recursos (`.arc` files) en el escenario actual.
-- **Representación Segura Exitosa:** Como alternativa al modelo 3D, se implementó exitosamente el uso del sistema de partículas de Dusklight (`dComIfGp_particle_set`). Ahora el jugador 2 se representa de manera 100% segura mediante una **partícula de Hada Luminosa** (`0x72F` / `0x01A`). Esto funciona en todos los mapas porque las partículas base siempre están cargadas en la memoria.
-  - **Mejora:** Se añadió una segunda hada más pequeña frente a la principal para indicar la dirección (rotación Y) a la que mira el jugador.
-- **Inyecciones seguras (Hooks):** Se utiliza `mod_update` con un retardo de 120 fotogramas para asegurar la inicialización completa.
-- **Experimento de Renderizado 3D (Inestable):** Se ha habilitado la invocación forzada del actor `ALINK` (`fpcNm_ALINK_e`) mediante `fopAcM_fastCreate` en la función `SpawnRemotePlayer()`. Como se esperaba, esto causa inestabilidad y crashes abruptos en el juego debido a la falta de archivos `.arc` para dos personajes en memoria. Se mantiene activado únicamente para propósitos de prueba/debugging.
-
-## Estado de la Red y Servidor
-- El simulador de servidor (`server_simulator.exe`) ha sido modificado exitosamente y ahora funciona como un **Servidor Dedicado de Broadcast Real** (`tp_server.exe`).
-- Cualquier paquete recibido de un cliente es re-transmitido a todos los demás clientes conectados (Multi-client routing).
-- **Modo Fantasma (Pruebas Locales):** Si el servidor detecta que hay solo 1 jugador conectado, le devolverá un eco de sus paquetes con un desplazamiento de +150 en X/Z para simular a otro jugador y probar modelos o efectos en solitario.
+- **`DUSK_CONST` en `leaf_methods`:** En el port PC, `leaf_methods` es `const`. Hijackear los métodos del actor dummy causaba violaciones de acceso. **Solución:** Se eliminó el enfoque de actor dummy por completo.
+- **Crash del modelo 3D:** El clon de `J3DModel` sin `McaMorf` (animación) tenía bones sin inicializar. **Solución:** Se usa partículas como representación visual mientras se prepara el hook approach.
+- **`mDoExt_modelUpdateDL` en contexto incorrecto:** Llamar desde un actor hijackeado donde la GX pipeline no estaba lista causaba crashes. **Solución:** Para renderizado 3D futuro, usar `mDoExt_modelEntryDL` o hooks post-draw.
+- **Spam de partículas:** Crear emitters cada frame causaba acumulación. **Solución:** Crear una vez, actualizar posición vía `setGlobalTranslation()`, invalidar en cleanup.
+- **Timeout de ENet en pantallas de carga:** 60 segundos de timeout configurado.
+- **`std::cout` en aplicación GUI:** Removido del cliente para evitar abort.
 
 ## Pasos Obligatorios de Compilación y Despliegue
 Siempre que se compila el mod con CMake (`cmake --build .`), el archivo resultante `.dusk` se genera en `build/mods/tp_multiplayer_mod.dusk`. **Este archivo DEBE ser copiado manualmente** a la carpeta de pruebas interna: `C:\Games\tp-multiplayer-mod\build\dusklight\mods\` para que los cambios tengan efecto en el entorno de pruebas local. Se ha creado el script `build_and_deploy.bat` para automatizar esto. No pongas nada fuera de la carpeta `tp-multiplayer-mod`.
 
 ## Próximos Pasos (Lo que falta)
-1. **Sincronización Bidireccional de Animaciones y Rotación:** Actualizar animaciones, posiblemente usando el sistema de estatus actual (salud) y ampliándolo a más variables.
-2. **Representación 3D (Opcional Futuro):** En el futuro, podríamos estudiar el uso de `J3DModelData` o generar un `SimpleModel` para cargar mallas arbitrarias si la comunidad desarrolla herramientas para ello, aunque la partícula luminosa actual cumple su función sin peligro de cierres.
-3. **Gestión de Sesiones (Lobby):** Un menú dentro del juego para alojarse a un servidor por IP en vez de hardcodearla.
+1. **Renderizado 3D del jugador remoto (Fase 5):** Usar `dusk::mods::hook_add_post` en el draw de `daAlink_c` para renderizar el modelo clonado después del Link local. Requiere copiar bone matrices o implementar `mDoExt_McaMorf` para animaciones.
+2. **Sincronización de Animaciones:** Enviar el ID de animación actual y reproducirla en el clon remoto.
+3. **Gestión de Sesiones (Lobby):** Menú in-game para conectarse a un servidor por IP.
+4. **Sincronización de Estado Extendido:** Espada desenvainada, escudo, transformación lobo.
+5. **Envío UDP Unreliable para posición:** Cambiar posición a UNRELIABLE para menor latencia.

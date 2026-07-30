@@ -1,7 +1,11 @@
 #include "Client.h"
-#include <iostream>
 
-Client::Client() : m_client(nullptr), m_peer(nullptr), m_connected(false) {
+// =============================================================================
+// Client — ENet Network Client for TP Multiplayer
+// =============================================================================
+
+Client::Client()
+    : m_client(nullptr), m_peer(nullptr), m_connected(false), m_myPlayerID(0xFF) {
 }
 
 Client::~Client() {
@@ -9,6 +13,7 @@ Client::~Client() {
 }
 
 bool Client::Connect(const std::string& hostName, uint16_t port) {
+    // Create the ENet host (client mode: 1 outgoing connection, 2 channels)
     if (!m_client) {
         m_client = enet_host_create(nullptr, 1, 2, 0, 0);
         if (!m_client) {
@@ -26,8 +31,12 @@ bool Client::Connect(const std::string& hostName, uint16_t port) {
     }
 
     // Increase timeout to 60 seconds to survive long map loading screens
+    // without getting disconnected by ENet's default timeout.
     enet_peer_timeout(m_peer, 0, 0, 60000);
 
+    // Wait briefly for the connection handshake to complete.
+    // 100ms is enough for localhost; remote servers may need the
+    // auto-reconnect logic in main.cpp to retry.
     ENetEvent event;
     if (enet_host_service(m_client, &event, 100) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
         m_connected = true;
@@ -42,7 +51,8 @@ bool Client::Connect(const std::string& hostName, uint16_t port) {
 void Client::Disconnect() {
     if (m_peer) {
         enet_peer_disconnect(m_peer, 0);
-        
+
+        // Drain pending packets during graceful disconnect
         ENetEvent event;
         while (enet_host_service(m_client, &event, 3000) > 0) {
             if (event.type == ENET_EVENT_TYPE_RECEIVE) {
@@ -58,6 +68,7 @@ void Client::Disconnect() {
         m_client = nullptr;
     }
     m_connected = false;
+    m_myPlayerID = 0xFF;  // Reset ID on disconnect
 }
 
 std::vector<std::vector<uint8_t>> Client::Update() {
@@ -65,10 +76,13 @@ std::vector<std::vector<uint8_t>> Client::Update() {
     if (!m_client) return packets;
 
     ENetEvent event;
+    // Non-blocking poll (timeout = 0): process all queued events
     while (enet_host_service(m_client, &event, 0) > 0) {
         switch (event.type) {
             case ENET_EVENT_TYPE_RECEIVE: {
-                std::vector<uint8_t> data(event.packet->data, event.packet->data + event.packet->dataLength);
+                std::vector<uint8_t> data(
+                    event.packet->data,
+                    event.packet->data + event.packet->dataLength);
                 packets.push_back(data);
                 enet_packet_destroy(event.packet);
                 break;
@@ -76,6 +90,7 @@ std::vector<std::vector<uint8_t>> Client::Update() {
             case ENET_EVENT_TYPE_DISCONNECT:
                 m_connected = false;
                 m_peer = nullptr;
+                m_myPlayerID = 0xFF;
                 break;
             default:
                 break;
@@ -86,7 +101,10 @@ std::vector<std::vector<uint8_t>> Client::Update() {
 
 void Client::Send(const std::vector<uint8_t>& data) {
     if (!m_connected || !m_peer) return;
-    
+
+    // Use RELIABLE flag for all game-state packets.
+    // For high-frequency position updates, UNRELIABLE would reduce latency,
+    // but RELIABLE ensures no dropped state during network hiccups.
     ENetPacket* packet = enet_packet_create(data.data(), data.size(), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(m_peer, 0, packet);
 }

@@ -24,7 +24,7 @@ namespace {
 }
 
 std::vector<uint8_t> PacketSerializer::SerializeSyncPosition(const SyncPositionPacket& packet) {
-    std::vector<uint8_t> data(16);
+    std::vector<uint8_t> data(25);
     uint32_t x = FloatToNet(packet.x);
     uint32_t y = FloatToNet(packet.y);
     uint32_t z = FloatToNet(packet.z);
@@ -34,17 +34,18 @@ std::vector<uint8_t> PacketSerializer::SerializeSyncPosition(const SyncPositionP
     std::memcpy(data.data() + 4, &y, 4);
     std::memcpy(data.data() + 8, &z, 4);
     std::memcpy(data.data() + 12, &rotY, 4);
+    std::memcpy(data.data() + 16, packet.stageName, 8);
+    data[24] = packet.roomNo;
 
     return data;
 }
 
 SyncPositionPacket PacketSerializer::DeserializeSyncPosition(const std::vector<uint8_t>& data) {
     SyncPositionPacket packet;
-    if (data.size() < 16) {
-        packet.x = 0.0f;
-        packet.y = 0.0f;
-        packet.z = 0.0f;
-        packet.rotY = 0.0f;
+    if (data.size() < 25) {
+        packet.x = packet.y = packet.z = packet.rotY = 0.0f;
+        std::memset(packet.stageName, 0, 8);
+        packet.roomNo = 0;
         return packet;
     }
 
@@ -58,6 +59,8 @@ SyncPositionPacket PacketSerializer::DeserializeSyncPosition(const std::vector<u
     packet.y = NetToFloat(y);
     packet.z = NetToFloat(z);
     packet.rotY = NetToFloat(rotY);
+    std::memcpy(packet.stageName, data.data() + 16, 8);
+    packet.roomNo = data[24];
 
     return packet;
 }
