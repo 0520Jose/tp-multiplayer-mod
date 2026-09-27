@@ -107,8 +107,10 @@ int daGhostPlayer_c::CreateHeap() {
     }
 
     // 3. Face / Expression model (al_face.bmd / zl_face.bmd)
+    // Use 0x11000084 (matching other submodels) rather than Link's 0x11020284, as the puppet
+    // does not run an mFaceBck dynamic material color/texture animator.
     if (localLink->mpLinkFaceModel && localLink->mpLinkFaceModel->getModelData()) {
-        mpFaceModel = mDoExt_J3DModel__create(localLink->mpLinkFaceModel->getModelData(), 0x80000, 0x11020284);
+        mpFaceModel = mDoExt_J3DModel__create(localLink->mpLinkFaceModel->getModelData(), 0x80000, 0x11000084);
         if (mpFaceModel) {
             mpFaceModel->setUserArea(0);
         }
@@ -232,9 +234,11 @@ int daGhostPlayer_c::Draw() {
             g_env_light.settingTevStruct(0, &current.pos, &tevStr);
         }
 
-        // Disable distance fog so the puppet never fades, blurs, or dithers with distance
-        tevStr.mFogStartZ = 999999.0f;
-        tevStr.mFogEndZ   = 1000000.0f;
+        // Disable GX fog cleanly: in GXSetFog (GXPixel.cpp line 27), when startZ == endZ,
+        // the fog coefficients aCoeff and cCoeff evaluate to 0.0f, eliminating fog blending completely
+        // without overflowing fixed-point registers (which happened when using 999999 / 1000000).
+        tevStr.mFogStartZ = 0.0f;
+        tevStr.mFogEndZ   = 0.0f;
 
         // Reset TevColor to neutral 0 as in daAlink_c::initTevCustomColor().
         // In Twilight Princess, TevColor is an additive flash register (setting it to 255
