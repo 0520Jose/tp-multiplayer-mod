@@ -3,6 +3,7 @@ dusklight/
 
 # Build output directories
 build/
+build-*/
 out/
 
 # IDE and editor directories

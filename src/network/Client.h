@@ -26,9 +26,16 @@ public:
     std::vector<std::vector<uint8_t>> Update();
 
     // Sends raw data to the server. Caller must prepend [type][playerID].
+    // Use for reliable packets: control messages, status updates.
     void Send(const std::vector<uint8_t>& data);
 
+    // Sends raw data unreliably (ENET_PACKET_FLAG_UNSEQUENCED, channel 1).
+    // Use for high-frequency position packets where dropping a frame is
+    // preferable to head-of-line blocking from a reliable retransmit queue.
+    void SendUnreliable(const std::vector<uint8_t>& data);
+
     bool IsConnected() const;
+    bool IsConnecting() const;
 
     // The playerID assigned by the server. 0xFF means not yet assigned.
     uint8_t GetPlayerID() const { return m_myPlayerID; }
