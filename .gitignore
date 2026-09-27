@@ -1,4 +1,38 @@
+# Dusklight emulator installation (binary + SDK, not tracked)
 dusklight/
+
+# Build output directories
 build/
-.vs/
 out/
+
+# IDE and editor directories
+.vs/
+.vscode/
+*.user
+
+# Game ROM (not tracked for legal reasons)
+iso/
+
+# CMake cache and generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!extern/enet/CMakeLists.txt
+
+# Compiled output
+*.dusk
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Agent workspace (not tracked)
+.agent/
+
+# OS files
+Thumbs.db
+.DS_Store
