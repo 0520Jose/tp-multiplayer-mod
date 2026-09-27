@@ -78,7 +78,7 @@ void NetworkPumpCallback() {
         switch (type) {
             case PACKET_POSITION: {
                 // Position update from another player
-                if (payload.size() < 16) break;
+                if (payload.size() < 25) break;
                 SyncPositionPacket posData = PacketSerializer::DeserializeSyncPosition(payload);
                 g_playerSync->ApplyRemotePosition(playerID, posData);
                 break;

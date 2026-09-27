@@ -23,7 +23,7 @@
 //      with a position offset (+150 X/Z) to simulate a second player
 //
 // Packet format: [PacketType:1][PlayerID:1][Payload:N]
-// Position payload: 16 bytes (x, y, z, rotY as network-order f32)
+// Position payload: 25 bytes (x, y, z, rotY [16b] + stageName [8b] + roomNo [1b])
 // Status payload: 8 bytes (health, maxHealth, animID)
 // =============================================================================
 
