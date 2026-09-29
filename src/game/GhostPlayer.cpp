@@ -1,4 +1,4 @@
-﻿#include "GhostPlayer.h"
+#include "GhostPlayer.h"
 #include "ActorInterface.h"
 #include <d/d_com_inf_game.h>
 #include <d/actor/d_a_alink.h>
@@ -71,6 +71,8 @@ daGhostPlayer_c::daGhostPlayer_c() {
     mpHatModel = nullptr;
     mpFaceModel = nullptr;
     mpHandModel = nullptr;
+    mpSwordModel = nullptr;
+    mpShieldModel = nullptr;
 }
 
 daGhostPlayer_c::~daGhostPlayer_c() {
@@ -78,6 +80,12 @@ daGhostPlayer_c::~daGhostPlayer_c() {
         m_particleEmitter->stopDrawParticle();
         m_particleEmitter = nullptr;
     }
+    mpModel = nullptr;
+    mpHatModel = nullptr;
+    mpFaceModel = nullptr;
+    mpHandModel = nullptr;
+    mpSwordModel = nullptr;
+    mpShieldModel = nullptr;
 }
 
 int daGhostPlayer_c::CreateHeap() {
@@ -124,11 +132,29 @@ int daGhostPlayer_c::CreateHeap() {
         }
     }
 
+    // 5. Sword model (mpSwAModel / mpSwMModel / mWoodSwordModel)
+    if (localLink->mSwordModel && localLink->mSwordModel->getModelData()) {
+        mpSwordModel = mDoExt_J3DModel__create(localLink->mSwordModel->getModelData(), 0x80000, 0x11000084);
+        if (mpSwordModel) {
+            mpSwordModel->setUserArea(0);
+        }
+    }
+
+    // 6. Shield model (mShieldModel)
+    if (localLink->mShieldModel && localLink->mShieldModel->getModelData()) {
+        mpShieldModel = mDoExt_J3DModel__create(localLink->mShieldModel->getModelData(), 0x80000, 0x11000084);
+        if (mpShieldModel) {
+            mpShieldModel->setUserArea(0);
+        }
+    }
+
     // Disable mipmaps on all submodels to eliminate distance blurriness & alpha-test dither
     DisableMipmapsForModel(mpModel);
     DisableMipmapsForModel(mpHatModel);
     DisableMipmapsForModel(mpFaceModel);
     DisableMipmapsForModel(mpHandModel);
+    DisableMipmapsForModel(mpSwordModel);
+    DisableMipmapsForModel(mpShieldModel);
 
     return 1;
 }
@@ -150,8 +176,8 @@ int daGhostPlayer_c::create() {
     // Initialize environment lighting / TEV struct for this actor
     dKy_tevstr_init(&tevStr, dComIfGp_roomControl_getStayNo(), 0xFF);
 
-    // Allocate isolated actor solid heap (192KB) for the full 4-submodel character instance
-    if (!fopAcM_entrySolidHeap(this, CreateHeapCallback, 0x30000)) {
+    // Allocate isolated actor solid heap (256KB) for the full character instance & equipment
+    if (!fopAcM_entrySolidHeap(this, CreateHeapCallback, 0x40000)) {
         // Link model data not yet loaded into RAM; retry next frame
         return static_cast<int>(cPhs_INIT_e);
     }
@@ -218,6 +244,18 @@ int daGhostPlayer_c::Execute() {
             mpHandModel->setAnmMtx(2, mpModel->getAnmMtx(0xE));
         }
 
+        // 5. Sword attached to Right Hand (Wrist joint 14 / 0xE)
+        if (mpSwordModel) {
+            mpSwordModel->setBaseTRMtx(mpModel->getAnmMtx(0xE));
+            SafeModelCalc(mpSwordModel);
+        }
+
+        // 6. Shield attached to Left Hand (Wrist joint 9)
+        if (mpShieldModel) {
+            mpShieldModel->setBaseTRMtx(mpModel->getAnmMtx(9));
+            SafeModelCalc(mpShieldModel);
+        }
+
         // Keep cull matrix up to date with body transform
         fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
     }
@@ -258,6 +296,8 @@ int daGhostPlayer_c::Draw() {
         DisableMipmapsForModel(mpHandModel);
         DisableMipmapsForModel(mpHatModel);
         DisableMipmapsForModel(mpFaceModel);
+        DisableMipmapsForModel(mpSwordModel);
+        DisableMipmapsForModel(mpShieldModel);
 
         // Helper lambda to apply lighting and entry directly (matching daAlink_c::basicModelDraw)
         auto DrawSubModel = [&](J3DModel* subModel) {
@@ -266,7 +306,7 @@ int daGhostPlayer_c::Draw() {
             mDoExt_modelEntryDL(subModel);
         };
 
-        // 1. Draw Body (al.bmd / bl.bmd)
+        // 1. Draw Body (al.bmd / bl.bmd / wl.bmd)
         DrawSubModel(mpModel);
 
         // 2. Draw Hands (al_hands.bmd / bl_hands.bmd)
@@ -277,6 +317,10 @@ int daGhostPlayer_c::Draw() {
 
         // 4. Draw Face (al_face.bmd / zl_face.bmd)
         DrawSubModel(mpFaceModel);
+
+        // 5. Draw Sword & Shield
+        DrawSubModel(mpSwordModel);
+        DrawSubModel(mpShieldModel);
     }
     return 1;
 }

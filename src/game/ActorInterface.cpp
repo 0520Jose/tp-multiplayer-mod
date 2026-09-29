@@ -150,6 +150,14 @@ void PlayerSync::ApplyRemotePosition(uint8_t playerID, const SyncPositionPacket&
 
 void PlayerSync::ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint16_t rupees, uint8_t form, uint8_t actionFlags, uint32_t animationId) {
     auto& state = m_remotePlayers[playerID];
+    if (state.hasData && state.form != form && state.actorID != 0xFFFFFFFF) {
+        fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
+        if (ghost && daGhostPlayer_c::sProcName != -1 &&
+            fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+            fopAcM_delete(ghost);
+        }
+        state.actorID = 0xFFFFFFFF;
+    }
     state.health = health;
     state.maxHealth = maxHealth;
     state.rupees = rupees;

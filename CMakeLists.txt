@@ -27,6 +27,7 @@ add_mod(tp_multiplayer_mod
         src/game/GhostPlayer.cpp
         src/game/WorldSync.cpp
         src/game/MapTracker.cpp
+        src/game/DebugController.cpp
 )
 
 add_subdirectory(extern/enet)
@@ -45,4 +46,7 @@ target_include_directories(server_simulator PRIVATE src)
 target_link_libraries(server_simulator PRIVATE enet)
 
 target_link_libraries(tp_multiplayer_mod PRIVATE enet)
+if(WIN32)
+    target_link_libraries(tp_multiplayer_mod PRIVATE user32)
+endif()
 target_include_directories(tp_multiplayer_mod PRIVATE ${CMAKE_BINARY_DIR}/_deps/tracy-src/public)

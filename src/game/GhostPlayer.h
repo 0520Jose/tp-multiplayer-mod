@@ -18,6 +18,8 @@ public:
     J3DModel* mpHatModel;
     J3DModel* mpFaceModel;
     J3DModel* mpHandModel;
+    J3DModel* mpSwordModel;
+    J3DModel* mpShieldModel;
 
     daGhostPlayer_c();
     virtual ~daGhostPlayer_c();

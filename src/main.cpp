@@ -20,6 +20,7 @@
 #include "game/GhostPlayer.h"
 #include "game/WorldSync.h"
 #include "game/MapTracker.h"
+#include "game/DebugController.h"
 #include <mods/svc/ui.h>
 
 // =============================================================================
@@ -39,6 +40,7 @@ Client* g_client = nullptr;
 PlayerSync* g_playerSync = nullptr;
 WorldSync* g_worldSync = nullptr;
 MapTracker* g_mapTracker = nullptr;
+DebugController* g_debugController = nullptr;
 bool g_isPlayerReady = false;
 
 // =============================================================================
@@ -165,40 +167,39 @@ void NetworkPumpCallback() {
 // =============================================================================
 
 void PlayerSyncCallback() {
-    if (!g_client || !g_client->IsConnected() || !g_playerSync) return;
+    if (!g_playerSync) return;
 
-    uint8_t myID = g_client->GetPlayerID();
-    if (myID == 0xFF) return;
+    // --- Send local state across network if connected ---
+    if (g_client && g_client->IsConnected()) {
+        uint8_t myID = g_client->GetPlayerID();
+        if (myID != 0xFF) {
+            g_sendCounter++;
+            if (g_sendCounter >= SEND_INTERVAL_FRAMES) {
+                g_sendCounter = 0;
 
-    // --- Send local state at controlled rate ---
-    g_sendCounter++;
-    if (g_sendCounter >= SEND_INTERVAL_FRAMES) {
-        g_sendCounter = 0;
+                SyncPositionPacket posPacket = g_playerSync->GetLocalPosition();
+                std::vector<uint8_t> posData = PacketSerializer::SerializeSyncPosition(posPacket);
+                posData.insert(posData.begin(), myID);
+                posData.insert(posData.begin(), PACKET_POSITION);
+                g_client->SendUnreliable(posData);
 
-        SyncPositionPacket posPacket = g_playerSync->GetLocalPosition();
-        std::vector<uint8_t> posData = PacketSerializer::SerializeSyncPosition(posPacket);
-        posData.insert(posData.begin(), myID);
-        posData.insert(posData.begin(), PACKET_POSITION);
-        // Position packets are high-frequency (15 Hz) — use unreliable/unsequenced
-        // so that a single lost packet doesn't stall the reliable channel queue.
-        // LERP interpolation makes individual dropped frames invisible.
-        g_client->SendUnreliable(posData);
+                SyncStatusPacket statusPacket = g_playerSync->GetLocalStatus();
+                std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
+                statusData.insert(statusData.begin(), myID);
+                statusData.insert(statusData.begin(), PACKET_STATUS);
+                g_client->Send(statusData);
 
-        SyncStatusPacket statusPacket = g_playerSync->GetLocalStatus();
-        std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
-        statusData.insert(statusData.begin(), myID);
-        statusData.insert(statusData.begin(), PACKET_STATUS);
-        g_client->Send(statusData); // Status is low-frequency — keep reliable
-
-        // --- Co-op World & Story Event Synchronization ---
-        if (g_worldSync) {
-            std::vector<SyncWorldEventPacket> events;
-            g_worldSync->PollLocalEvents(events);
-            for (const auto& ev : events) {
-                std::vector<uint8_t> evData = PacketSerializer::SerializeSyncWorldEvent(ev);
-                evData.insert(evData.begin(), myID);
-                evData.insert(evData.begin(), PACKET_WORLD_EVENT);
-                g_client->Send(evData); // Reliable delivery for world/story progression
+                // --- Co-op World & Story Event Synchronization ---
+                if (g_worldSync) {
+                    std::vector<SyncWorldEventPacket> events;
+                    g_worldSync->PollLocalEvents(events);
+                    for (const auto& ev : events) {
+                        std::vector<uint8_t> evData = PacketSerializer::SerializeSyncWorldEvent(ev);
+                        evData.insert(evData.begin(), myID);
+                        evData.insert(evData.begin(), PACKET_WORLD_EVENT);
+                        g_client->Send(evData);
+                    }
+                }
             }
         }
     }
@@ -225,6 +226,7 @@ extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
     g_playerSync = new PlayerSync();
     g_worldSync = new WorldSync();
     g_mapTracker = new MapTracker();
+    g_debugController = new DebugController();
 
     // Register our custom Puppet Actor to bypass Twilight Princess Link singletons
     if (g_actorService) {
@@ -248,6 +250,10 @@ extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
 
 extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
     NetworkPumpCallback();
+
+    if (g_debugController) {
+        g_debugController->Update();
+    }
 
     static int framesSincePlayerLoaded = 0;
 
@@ -283,6 +289,10 @@ extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
 // =============================================================================
 
 extern "C" MOD_EXPORT ModResult mod_shutdown(ModError* out_error) {
+    if (g_debugController) {
+        delete g_debugController;
+        g_debugController = nullptr;
+    }
     if (g_client) {
         g_client->Disconnect();
         delete g_client;
