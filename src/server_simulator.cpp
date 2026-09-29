@@ -157,6 +157,19 @@ int main() {
                         }
                     }
 
+                    if (type == PACKET_WORLD_EVENT && event.packet->dataLength == 14) {
+                        std::vector<uint8_t> payload(
+                            event.packet->data + 2,
+                            event.packet->data + event.packet->dataLength);
+                        SyncWorldEventPacket ev = PacketSerializer::DeserializeSyncWorldEvent(payload);
+                        std::cout << "[*] [World Event] Hero " << (int)event.packet->data[1]
+                                  << " triggered type=" << (int)ev.eventType
+                                  << " id=" << ev.eventId
+                                  << " param=" << (int)ev.param
+                                  << " stage=" << ev.stageName << "\n";
+                    }
+
+
                     // ==========================================================
                     // GHOST MODE — Solo Testing Simulation
                     // ==========================================================
@@ -228,8 +241,8 @@ int main() {
                                 newPayload.data(), newPayload.size(), event.packet->flags);
                             enet_peer_send(event.peer, 0, echo);
                         }
-                        // Status packet: 2-byte header + 8-byte payload = 10 bytes
-                        else if (type == PACKET_STATUS && event.packet->dataLength == 10) {
+                        // Status packet: 2-byte header + 12-byte payload = 14 bytes
+                        else if (type == PACKET_STATUS && event.packet->dataLength == 14) {
                             // Echo status verbatim but with ghost ID
                             std::vector<uint8_t> echo(
                                 event.packet->data,
@@ -240,6 +253,14 @@ int main() {
                                 echo.data(), echo.size(), event.packet->flags);
                             enet_peer_send(event.peer, 0, pkt);
                         }
+                    }
+
+                    if (type == PACKET_CHAT_MESSAGE && event.packet->dataLength == 66) {
+                        std::vector<uint8_t> payload(
+                            event.packet->data + 2,
+                            event.packet->data + event.packet->dataLength);
+                        SyncChatMessagePacket chat = PacketSerializer::DeserializeSyncChatMessage(payload);
+                        std::cout << "[Chat] Hero " << (int)event.packet->data[1] << ": " << chat.message << "\n";
                     }
 
                     enet_packet_destroy(event.packet);

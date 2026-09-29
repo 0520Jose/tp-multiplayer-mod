@@ -66,37 +66,89 @@ SyncPositionPacket PacketSerializer::DeserializeSyncPosition(const std::vector<u
 }
 
 std::vector<uint8_t> PacketSerializer::SerializeSyncStatus(const SyncStatusPacket& packet) {
-    std::vector<uint8_t> data(8);
+    // 12 bytes [health:i16][maxHealth:i16][rupees:u16][form:u8][actionFlags:u8][animID:u32]
+    std::vector<uint8_t> data(12);
     uint16_t health = htons(packet.health);
     uint16_t maxHealth = htons(packet.maxHealth);
+    uint16_t rupees = htons(packet.rupees);
     uint32_t anim = htonl(packet.currentAnimation);
     
     std::memcpy(data.data(), &health, 2);
     std::memcpy(data.data() + 2, &maxHealth, 2);
-    std::memcpy(data.data() + 4, &anim, 4);
+    std::memcpy(data.data() + 4, &rupees, 2);
+    data[6] = packet.form;
+    data[7] = packet.actionFlags;
+    std::memcpy(data.data() + 8, &anim, 4);
     
     return data;
 }
 
 SyncStatusPacket PacketSerializer::DeserializeSyncStatus(const std::vector<uint8_t>& data) {
-    SyncStatusPacket packet;
-    if (data.size() < 8) {
-        packet.health = 0;
-        packet.maxHealth = 0;
-        packet.currentAnimation = 0;
+    SyncStatusPacket packet = {};
+    if (data.size() < 12) {
         return packet;
     }
     
-    uint16_t health, maxHealth;
+    uint16_t health, maxHealth, rupees;
     uint32_t anim;
     
     std::memcpy(&health, data.data(), 2);
     std::memcpy(&maxHealth, data.data() + 2, 2);
-    std::memcpy(&anim, data.data() + 4, 4);
+    std::memcpy(&rupees, data.data() + 4, 2);
+    packet.form = data[6];
+    packet.actionFlags = data[7];
+    std::memcpy(&anim, data.data() + 8, 4);
     
     packet.health = ntohs(health);
     packet.maxHealth = ntohs(maxHealth);
+    packet.rupees = ntohs(rupees);
     packet.currentAnimation = ntohl(anim);
     
     return packet;
 }
+
+std::vector<uint8_t> PacketSerializer::SerializeSyncWorldEvent(const SyncWorldEventPacket& packet) {
+    // 12 bytes payload: [eventType:1][eventId:2 BE][param:1][stageName:8]
+    std::vector<uint8_t> data(12);
+    data[0] = packet.eventType;
+    uint16_t netEventId = htons(packet.eventId);
+    std::memcpy(data.data() + 1, &netEventId, 2);
+    data[3] = packet.param;
+    std::memcpy(data.data() + 4, packet.stageName, 8);
+    return data;
+}
+
+SyncWorldEventPacket PacketSerializer::DeserializeSyncWorldEvent(const std::vector<uint8_t>& data) {
+    SyncWorldEventPacket packet = {};
+    if (data.size() < 12) {
+        return packet;
+    }
+    packet.eventType = data[0];
+    uint16_t netEventId;
+    std::memcpy(&netEventId, data.data() + 1, 2);
+    packet.eventId = ntohs(netEventId);
+    packet.param = data[3];
+    std::memcpy(packet.stageName, data.data() + 4, 8);
+    return packet;
+}
+
+std::vector<uint8_t> PacketSerializer::SerializeSyncChatMessage(const SyncChatMessagePacket& packet) {
+    std::vector<uint8_t> data(64, 0);
+    std::strncpy(reinterpret_cast<char*>(data.data()), packet.message, 63);
+    data[63] = '\0';
+    return data;
+}
+
+SyncChatMessagePacket PacketSerializer::DeserializeSyncChatMessage(const std::vector<uint8_t>& data) {
+    SyncChatMessagePacket packet = {};
+    if (data.size() < 64) {
+        std::memcpy(packet.message, data.data(), data.size());
+        packet.message[data.size()] = '\0';
+    } else {
+        std::memcpy(packet.message, data.data(), 63);
+        packet.message[63] = '\0';
+    }
+    return packet;
+}
+
+

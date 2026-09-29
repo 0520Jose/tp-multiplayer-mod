@@ -47,20 +47,26 @@ static void TestPositionSerialization() {
 
 // --- Test: Status packet round-trip ---
 static void TestStatusSerialization() {
-    SyncStatusPacket statusPacket;
+    SyncStatusPacket statusPacket = {};
     statusPacket.health = 12;
     statusPacket.maxHealth = 20;
+    statusPacket.rupees = 250;
+    statusPacket.form = 1; // Wolf form
+    statusPacket.actionFlags = 1; // Horse riding
     statusPacket.currentAnimation = 0x01020304;
 
     std::vector<uint8_t> statusData = PacketSerializer::SerializeSyncStatus(statusPacket);
-    assert(statusData.size() == 8);  // 2 + 2 + 4 bytes
+    assert(statusData.size() == 12);  // 2 + 2 + 2 + 1 + 1 + 4 bytes
 
     SyncStatusPacket dStatus = PacketSerializer::DeserializeSyncStatus(statusData);
     assert(dStatus.health == statusPacket.health);
     assert(dStatus.maxHealth == statusPacket.maxHealth);
+    assert(dStatus.rupees == statusPacket.rupees);
+    assert(dStatus.form == statusPacket.form);
+    assert(dStatus.actionFlags == statusPacket.actionFlags);
     assert(dStatus.currentAnimation == statusPacket.currentAnimation);
 
-    std::cout << "[PASS] Status serialization round-trip\n";
+    std::cout << "[PASS] Status serialization round-trip (health, form, rupees, actions)\n";
 }
 
 // --- Test: New protocol wire format (type + playerID + payload) ---
@@ -143,8 +149,69 @@ static void TestPacketTypes() {
     assert(PACKET_STATUS == 1);
     assert(PACKET_PLAYER_ASSIGN == 2);
     assert(PACKET_PLAYER_DISCONNECT == 3);
+    assert(PACKET_WORLD_EVENT == 4);
+    assert(PACKET_CHAT_MESSAGE == 5);
 
     std::cout << "[PASS] PacketType enum values\n";
+}
+
+// --- Test: World event packet round-trip ---
+static void TestWorldEventSerialization() {
+    SyncWorldEventPacket eventPacket = {};
+    eventPacket.eventType = WORLD_EVENT_TBOX_ON;
+    eventPacket.eventId = 42;
+    eventPacket.param = 3;
+    std::memcpy(eventPacket.stageName, "D_MN05A", 8);
+
+    std::vector<uint8_t> eventData = PacketSerializer::SerializeSyncWorldEvent(eventPacket);
+    assert(eventData.size() == 12);  // 1 + 2 + 1 + 8 bytes
+
+    SyncWorldEventPacket dEvent = PacketSerializer::DeserializeSyncWorldEvent(eventData);
+    assert(dEvent.eventType == eventPacket.eventType);
+    assert(dEvent.eventId == eventPacket.eventId);
+    assert(dEvent.param == eventPacket.param);
+    assert(std::memcmp(dEvent.stageName, eventPacket.stageName, 8) == 0);
+
+    // Wire format test with playerID header: [type=4][playerID=2][...12 payload bytes...]
+    eventData.insert(eventData.begin(), 2);
+    eventData.insert(eventData.begin(), PACKET_WORLD_EVENT);
+    assert(eventData.size() == 14);
+    assert(eventData[0] == PACKET_WORLD_EVENT);
+    assert(eventData[1] == 2);
+
+    std::vector<uint8_t> payload(eventData.begin() + 2, eventData.end());
+    SyncWorldEventPacket decoded = PacketSerializer::DeserializeSyncWorldEvent(payload);
+    assert(decoded.eventType == WORLD_EVENT_TBOX_ON);
+    assert(decoded.eventId == 42);
+    assert(decoded.param == 3);
+    assert(std::memcmp(decoded.stageName, "D_MN05A", 8) == 0);
+
+    std::cout << "[PASS] World event serialization & wire format round-trip\n";
+}
+
+// --- Test: Chat message packet round-trip ---
+static void TestChatMessageSerialization() {
+    SyncChatMessagePacket chatPacket = {};
+    std::strncpy(chatPacket.message, "Hello from Ordon Village!", sizeof(chatPacket.message) - 1);
+
+    std::vector<uint8_t> chatData = PacketSerializer::SerializeSyncChatMessage(chatPacket);
+    assert(chatData.size() == 64);
+
+    SyncChatMessagePacket dChat = PacketSerializer::DeserializeSyncChatMessage(chatData);
+    assert(std::strncmp(dChat.message, "Hello from Ordon Village!", sizeof(dChat.message)) == 0);
+
+    // Wire format test: [type=5][playerID=1][...64 bytes payload...]
+    chatData.insert(chatData.begin(), 1);
+    chatData.insert(chatData.begin(), PACKET_CHAT_MESSAGE);
+    assert(chatData.size() == 66);
+    assert(chatData[0] == PACKET_CHAT_MESSAGE);
+    assert(chatData[1] == 1);
+
+    std::vector<uint8_t> payload(chatData.begin() + 2, chatData.end());
+    SyncChatMessagePacket decoded = PacketSerializer::DeserializeSyncChatMessage(payload);
+    assert(std::strcmp(decoded.message, "Hello from Ordon Village!") == 0);
+
+    std::cout << "[PASS] Chat message serialization & wire format round-trip\n";
 }
 
 int main() {
@@ -154,6 +221,8 @@ int main() {
 
     TestPositionSerialization();
     TestStatusSerialization();
+    TestWorldEventSerialization();
+    TestChatMessageSerialization();
     TestProtocolFormat();
     TestRemotePlayerState();
     TestConnectionConfig();
@@ -164,3 +233,5 @@ int main() {
     std::cout << "===========================================\n";
     return 0;
 }
+
+
