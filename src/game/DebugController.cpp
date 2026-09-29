@@ -279,10 +279,9 @@ namespace {
 
         g_ui->pane_add_section(ctx, pane, "Keyboard Shortcuts");
         g_ui->pane_add_text(ctx, pane,
-            "F1: Help Guide | F2: Status | F3: 3D Link Dummy\n"
-            "F4: Dummy Move | F5: Sync Test | F6: Chat Dialog\n"
-            "F7: Radar Beacon | F8: Wolf/Human | F9: Reconnect\n"
-            "F10: Reload 3D | F11: IP & Port Connection Dialog", nullptr);
+            "F1: Help Guide | F2: Status | F5: Sync Test\n"
+            "F6: Chat Dialog | F7: Radar Beacon | F8: Wolf/Human\n"
+            "F9: Reconnect | F10: Reload 3D | F11: IP & Port Dialog", nullptr);
 
         return MOD_OK;
     }
@@ -290,11 +289,6 @@ namespace {
 
 DebugController::DebugController() {
     std::memset(m_keyStates, 0, sizeof(m_keyStates));
-    m_dummyActive = false;
-    m_dummyMotionMode = 0;
-    m_dummyAngle = 0.0f;
-    m_dummyPatrolDist = 0.0f;
-    m_dummyPatrolDir = 1;
 
     // Load saved connection settings from disk
     ConnectionConfig::EnsureLoaded();
@@ -304,10 +298,6 @@ DebugController::DebugController() {
 }
 
 DebugController::~DebugController() {
-    if (m_dummyActive && g_playerSync) {
-        g_playerSync->RemoveRemotePlayer(200);
-        m_dummyActive = false;
-    }
 }
 
 void DebugController::RegisterModsPanel() {
@@ -396,8 +386,6 @@ void DebugController::Update() {
     // Check hotkeys
     if (JustPressed(VK_F1))  ShowHelpToast();
     if (JustPressed(VK_F2))  ShowStatusToast();
-    if (JustPressed(VK_F3))  ToggleDummyPlayer();
-    if (JustPressed(VK_F4))  ToggleDummyMotion();
     if (JustPressed(VK_F5))  TestWorldSync();
     if (JustPressed(VK_F6))  OpenChatDialog();
     if (JustPressed(VK_F7))  PingRadarAndBeacon();
@@ -405,18 +393,12 @@ void DebugController::Update() {
     if (JustPressed(VK_F9))  ReconnectNetwork();
     if (JustPressed(VK_F10)) ReloadPuppetActors();
     if (JustPressed(VK_F11)) OpenConnectionDialog();
-
-    // Drive local dummy animation / position update if active
-    if (m_dummyActive) {
-        UpdateDummySimulation();
-    }
 }
 
 void DebugController::ShowHelpToast() {
     PushNotification(
         "Multiplayer Hotkeys Guide",
         "<b>F1</b>: Guide | <b>F2</b>: Mod Status<br/>"
-        "<b>F3</b>: 3D Link Dummy | <b>F4</b>: Dummy Move<br/>"
         "<b>F5</b>: World Sync | <b>F6</b>: Chat Dialog (Type)<br/>"
         "<b>F7</b>: Radar Ping | <b>F8</b>: Wolf/Human Form<br/>"
         "<b>F9</b>: Reconnect | <b>F10</b>: Reload 3D<br/>"
@@ -445,141 +427,16 @@ void DebugController::ShowStatusToast() {
         "Net: %s (ID:%d) | Heroes: %zu<br/>"
         "Host: %s:%u<br/>"
         "Stage: %s (Rm:%d) | HP:%d/%d | Rup:%d<br/>"
-        "Form: %s | Dummy 3D: %s",
+        "Form: %s",
         conn ? "Connected" : (connecting ? "Connecting..." : "Offline"),
         (int)myId, remoteCount,
         ConnectionConfig::GetConfiguredHost("127.0.0.1").c_str(),
         ConnectionConfig::GetConfiguredPort(1234),
         stage, room, hp, maxHp, rupees,
-        (form == 1) ? "Wolf" : "Human",
-        m_dummyActive ? "Active" : "Off"
+        (form == 1) ? "Wolf" : "Human"
     );
 
     PushNotification("Multiplayer Diagnostics", statusBuf, 5500);
-}
-
-void DebugController::ToggleDummyPlayer() {
-    if (!g_playerSync) return;
-
-    daAlink_c* localPlayer = (daAlink_c*)dComIfGp_getPlayer(0);
-    if (!localPlayer) {
-        PushNotification("Dummy Spawn Error", "Local player not loaded into world yet.");
-        return;
-    }
-
-    const char* currentStage = dComIfGp_getStartStageName();
-    if (!currentStage) currentStage = "F_SP103";
-    int roomNo = fopAcM_GetRoomNo(localPlayer);
-
-    if (!m_dummyActive) {
-        m_dummyActive = true;
-        m_dummyMotionMode = 0;
-        m_dummyAngle = 0.0f;
-        m_dummyPatrolDist = 0.0f;
-        m_dummyPatrolDir = 1;
-
-        // Spawn dummy 220 units directly in front of Link
-        float linkAngleRad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
-        float spawnX = localPlayer->current.pos.x + 220.0f * std::sin(linkAngleRad);
-        float spawnY = localPlayer->current.pos.y;
-        float spawnZ = localPlayer->current.pos.z + 220.0f * std::cos(linkAngleRad);
-        float spawnRotY = localPlayer->current.angle.y + 32768.0f; // Face local Link
-
-        SyncPositionPacket posPkt = {};
-        posPkt.x = spawnX;
-        posPkt.y = spawnY;
-        posPkt.z = spawnZ;
-        posPkt.rotY = spawnRotY;
-        posPkt.roomNo = static_cast<uint8_t>(roomNo);
-        std::strncpy(posPkt.stageName, currentStage, 8);
-
-        uint8_t form = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getTransformStatus();
-
-        g_playerSync->ApplyRemotePosition(200, posPkt);
-        g_playerSync->ApplyRemoteStatus(200, 12, 12, 50, form, 0, 0);
-
-        PushNotification("3D Puppet Test Dummy", "Spawned Hero 200 directly in front of you!<br/>Press <b>F4</b> to cycle movement.");
-    } else {
-        m_dummyActive = false;
-        g_playerSync->RemoveRemotePlayer(200);
-        PushNotification("3D Puppet Test Dummy", "Despawned test dummy.");
-    }
-}
-
-void DebugController::ToggleDummyMotion() {
-    if (!m_dummyActive) {
-        ToggleDummyPlayer();
-        return;
-    }
-
-    m_dummyMotionMode = (m_dummyMotionMode + 1) % 3;
-
-    if (m_dummyMotionMode == 0) {
-        PushNotification("Dummy Movement", "Mode: <b>Standing Idle</b> (Bind / A-pose inspection)");
-    } else if (m_dummyMotionMode == 1) {
-        PushNotification("Dummy Movement", "Mode: <b>Orbiting Link</b> (360-degree rotation & lighting check)");
-    } else {
-        PushNotification("Dummy Movement", "Mode: <b>Patrol Walk</b> (Front-to-back walking motion)");
-    }
-}
-
-void DebugController::UpdateDummySimulation() {
-    if (!g_playerSync || !m_dummyActive) return;
-
-    daAlink_c* localPlayer = (daAlink_c*)dComIfGp_getPlayer(0);
-    if (!localPlayer) return;
-
-    const char* currentStage = dComIfGp_getStartStageName();
-    if (!currentStage) currentStage = "F_SP103";
-    int roomNo = fopAcM_GetRoomNo(localPlayer);
-
-    SyncPositionPacket posPkt = {};
-    posPkt.y = localPlayer->current.pos.y;
-    posPkt.roomNo = static_cast<uint8_t>(roomNo);
-    std::strncpy(posPkt.stageName, currentStage, 8);
-
-    uint32_t animId = 0;
-
-    if (m_dummyMotionMode == 0) {
-        float rad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
-        posPkt.x = localPlayer->current.pos.x + 220.0f * std::sin(rad);
-        posPkt.z = localPlayer->current.pos.z + 220.0f * std::cos(rad);
-        posPkt.rotY = localPlayer->current.angle.y + 32768.0f;
-        animId = 0;
-    } else if (m_dummyMotionMode == 1) {
-        m_dummyAngle += 0.025f;
-        if (m_dummyAngle > 6.2831853f) m_dummyAngle -= 6.2831853f;
-
-        posPkt.x = localPlayer->current.pos.x + 250.0f * std::sin(m_dummyAngle);
-        posPkt.z = localPlayer->current.pos.z + 250.0f * std::cos(m_dummyAngle);
-        float tangentAngleRad = m_dummyAngle + 1.5707963f;
-        posPkt.rotY = tangentAngleRad * (32768.0f / 3.14159265f);
-        animId = 1;
-    } else {
-        m_dummyPatrolDist += m_dummyPatrolDir * 3.0f;
-        if (m_dummyPatrolDist > 300.0f) {
-            m_dummyPatrolDist = 300.0f;
-            m_dummyPatrolDir = -1;
-        } else if (m_dummyPatrolDist < 120.0f) {
-            m_dummyPatrolDist = 120.0f;
-            m_dummyPatrolDir = 1;
-        }
-
-        float rad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
-        posPkt.x = localPlayer->current.pos.x + m_dummyPatrolDist * std::sin(rad);
-        posPkt.z = localPlayer->current.pos.z + m_dummyPatrolDist * std::cos(rad);
-        posPkt.rotY = (m_dummyPatrolDir > 0) ? localPlayer->current.angle.y : (localPlayer->current.angle.y + 32768.0f);
-        animId = 1;
-    }
-
-    g_playerSync->ApplyRemotePosition(200, posPkt);
-
-    auto& rem = g_playerSync->GetRemotePlayers();
-    auto it = rem.find(200);
-    if (it != rem.end()) {
-        it->second.framesIdle = 0;
-        it->second.animationId = animId;
-    }
 }
 
 void DebugController::TestWorldSync() {
