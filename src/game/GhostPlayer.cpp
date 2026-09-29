@@ -86,41 +86,38 @@ static void DisableMipmapsForModel(J3DModel* model) {
     }
 }
 
+daGhostPlayer_c::daGhostPlayer_c()
+    : m_networkPlayerId(0), m_particleEmitter(nullptr),
+      mpModel(nullptr), mpHatModel(nullptr), mpFaceModel(nullptr), mpHandModel(nullptr) {
+}
+
+daGhostPlayer_c::~daGhostPlayer_c() {
+    mpModel = nullptr;
+    mpHatModel = nullptr;
+    mpFaceModel = nullptr;
+    mpHandModel = nullptr;
+    m_particleEmitter = nullptr;
+}
+
 int daGhostPlayer_c::CreateHeap() {
-    if (localLink && localLink->mpLinkModel) {
-        mpModel = mDoExt_J3DModel__create(localLink->mpLinkModel->getModelData(), 0x80000, 0x11000084);
-        if (mpModel) mpModel->setUserArea(0);
-    }
-
-    if (localLink && localLink->mpLinkHatModel) {
-        mpHatModel = mDoExt_J3DModel__create(localLink->mpLinkHatModel->getModelData(), 0x80000, 0x11000084);
-        if (mpHatModel) mpHatModel->setUserArea(0);
-    }
-
-    if (localLink && localLink->mpLinkFaceModel) {
-        mpFaceModel = mDoExt_J3DModel__create(localLink->mpLinkFaceModel->getModelData(), 0x80000, 0x11000084);
-        if (mpFaceModel) mpFaceModel->setUserArea(0);
-    }
-
-    if (localLink && localLink->mpLinkHandModel) {
-        mpHandModel = mDoExt_J3DModel__create(localLink->mpLinkHandModel->getModelData(), 0x80000, 0x11000084);
-        if (mpHandModel) mpHandModel->setUserArea(0);
-    }
-
-    DisableMipmapsForModel(mpModel);
-    DisableMipmapsForModel(mpHatModel);
-    DisableMipmapsForModel(mpFaceModel);
-    DisableMipmapsForModel(mpHandModel);
-
+    // 3D mesh rendering of Link is explicitly marked as PENDIENTE.
+    // Models are kept null to prevent graphics pipeline crashes while co-op systems run.
+    mpModel = nullptr;
+    mpHatModel = nullptr;
+    mpFaceModel = nullptr;
+    mpHandModel = nullptr;
     return 1;
 }
 
 int daGhostPlayer_c::create() {
     m_networkPlayerId = static_cast<uint8_t>(fopAcM_GetParam(this));
+    m_particleEmitter = nullptr;
+    mpModel = nullptr;
+    mpHatModel = nullptr;
+    mpFaceModel = nullptr;
+    mpHandModel = nullptr;
 
-    if (!fopAcM_entrySolidHeap(this, (heapCallbackFunc)CreateHeapCallback, 0x30000)) {
-        return cPhs_ERROR_e;
-    }
+    fopAcM_entrySolidHeap(this, (heapCallbackFunc)CreateHeapCallback, 0x1000);
 
     dKy_tevstr_init(&tevStr, dComIfGp_roomControl_getStayNo(), 0xFF);
     
@@ -187,16 +184,18 @@ int daGhostPlayer_c::Execute() {
 
     tevStr.room_no = dComIfGp_roomControl_getStayNo();
 
+    // Maintain actor position and rotation matrix for world/collision presence
+    mDoMtx_stack_c::push();
+    mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
+    mDoMtx_stack_c::YrotM(shape_angle.y);
+    mDoMtx_stack_c::scaleM(scale);
     if (mpModel) {
-        mDoMtx_stack_c::push();
-        mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
-        mDoMtx_stack_c::YrotM(shape_angle.y);
-        mDoMtx_stack_c::scaleM(scale);
         mpModel->setBaseTRMtx(mDoMtx_stack_c::get());
-        mDoMtx_stack_c::pop();
-
         fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
+    } else {
+        fopAcM_SetMtx(this, mDoMtx_stack_c::get());
     }
+    mDoMtx_stack_c::pop();
 
     SafeModelCalc(mpModel);
     SafeModelCalc(mpHatModel);
@@ -215,41 +214,53 @@ int daGhostPlayer_c::Execute() {
 }
 
 int daGhostPlayer_c::Draw() {
-    DisableMipmapsForModel(mpModel);
-    DisableMipmapsForModel(mpHatModel);
-    DisableMipmapsForModel(mpFaceModel);
-    DisableMipmapsForModel(mpHandModel);
+    // Only perform 3D drawing passes when models are present
+    if (mpModel) {
+        DisableMipmapsForModel(mpModel);
+        g_env_light.settingTevStruct(0, &current.pos, &tevStr);
 
-    g_env_light.settingTevStruct(0, &current.pos, &tevStr);
+        J3DJointCallBack savedCallbacks[128];
+        ClearJointCallbacks(mpModel, savedCallbacks);
 
-    J3DJointCallBack savedCallbacks[128];
-    ClearJointCallbacks(mpModel, savedCallbacks);
+        g_env_light.setLightTevColorType_MAJI(mpModel, &tevStr);
+        mDoExt_modelEntryDL(mpModel);
 
-    g_env_light.setLightTevColorType_MAJI(mpModel, &tevStr);
-    mDoExt_modelEntryDL(mpModel);
+        RestoreJointCallbacks(mpModel, savedCallbacks);
+    }
 
-    g_env_light.setLightTevColorType_MAJI(mpHandModel, &tevStr);
-    mpHandModel->calcMaterial();
-    mpHandModel->diff();
-    mDoExt_modelEntryDL(mpHandModel);
+    if (mpHandModel) {
+        DisableMipmapsForModel(mpHandModel);
+        g_env_light.setLightTevColorType_MAJI(mpHandModel, &tevStr);
+        mpHandModel->calcMaterial();
+        mpHandModel->diff();
+        mDoExt_modelEntryDL(mpHandModel);
+    }
 
-    g_env_light.setLightTevColorType_MAJI(mpHatModel, &tevStr);
-    mpHatModel->calcMaterial();
-    mpHatModel->diff();
-    mDoExt_modelEntryDL(mpHatModel);
+    if (mpHatModel) {
+        DisableMipmapsForModel(mpHatModel);
+        g_env_light.setLightTevColorType_MAJI(mpHatModel, &tevStr);
+        mpHatModel->calcMaterial();
+        mpHatModel->diff();
+        mDoExt_modelEntryDL(mpHatModel);
+    }
 
-    g_env_light.setLightTevColorType_MAJI(mpFaceModel, &tevStr);
-    mpFaceModel->calcMaterial();
-    mpFaceModel->diff();
-    mDoExt_modelEntryDL(mpFaceModel);
-
-    RestoreJointCallbacks(mpModel, savedCallbacks);
+    if (mpFaceModel) {
+        DisableMipmapsForModel(mpFaceModel);
+        g_env_light.setLightTevColorType_MAJI(mpFaceModel, &tevStr);
+        mpFaceModel->calcMaterial();
+        mpFaceModel->diff();
+        mDoExt_modelEntryDL(mpFaceModel);
+    }
 
     return 1;
 }
 
 int daGhostPlayer_c::Delete() {
-    this->~daGhostPlayer_c();
+    mpModel = nullptr;
+    mpHatModel = nullptr;
+    mpFaceModel = nullptr;
+    mpHandModel = nullptr;
+    m_particleEmitter = nullptr;
     return 1;
 }
 
