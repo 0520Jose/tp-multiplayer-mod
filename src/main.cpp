@@ -228,6 +228,9 @@ extern "C" MOD_EXPORT ModResult mod_initialize(ModError* out_error) {
     g_mapTracker = new MapTracker();
     g_debugController = new DebugController();
 
+    // Register GUI panel in Dusklight Mods settings
+    DebugController::RegisterModsPanel();
+
     // Register our custom Puppet Actor to bypass Twilight Princess Link singletons
     if (g_actorService) {
         ModResult res = g_actorService->register_actor(

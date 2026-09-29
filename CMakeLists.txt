@@ -3,6 +3,8 @@ project(tp_multiplayer_mod LANGUAGES C CXX)
 
 # Habilitar soporte para mods en dusklight
 set(DUSK_ENABLE_CODE_MODS ON CACHE BOOL "" FORCE)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
     add_compile_options(/Zc:__cplusplus)
