@@ -20,6 +20,7 @@ add_subdirectory("${DUSK_DIR}/sdk" dusk-sdk EXCLUDE_FROM_ALL)
 # Crear el mod
 add_mod(tp_multiplayer_mod
     MOD_JSON mod.json
+    RES_DIR res
     FEATURES game
     SOURCES 
         src/main.cpp

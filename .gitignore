@@ -34,6 +34,12 @@ Makefile
 # Agent workspace (not tracked)
 .agent/
 
+# Local utility scripts
+scripts/
+
+# Local user configs
+multiplayer_config.txt
+
 # OS files
 Thumbs.db
 .DS_Store

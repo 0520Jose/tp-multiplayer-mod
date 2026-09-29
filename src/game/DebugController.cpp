@@ -199,6 +199,27 @@ namespace {
         std::strncpy(s_uiHostBuffer, curHost.c_str(), sizeof(s_uiHostBuffer) - 1);
         s_uiPortValue = ConnectionConfig::GetConfiguredPort(1234);
 
+        bool conn = g_client && g_client->IsConnected();
+        bool connecting = g_client && g_client->IsConnecting();
+        size_t peers = g_playerSync ? g_playerSync->GetRemotePlayers().size() : 0;
+        uint8_t myId = (g_client && conn) ? g_client->GetPlayerID() : 0;
+
+        char statusRml[512];
+        if (conn) {
+            std::snprintf(statusRml, sizeof(statusRml),
+                "<p><b>Status:</b> Connected (Hero #%u) | <b>Session:</b> %zu player(s) online | <b>v0.1.1</b></p>",
+                (unsigned int)myId, peers);
+        } else if (connecting) {
+            std::snprintf(statusRml, sizeof(statusRml),
+                "<p><b>Status:</b> Connecting to %s:%u ... | <b>v0.1.1</b></p>",
+                curHost.c_str(), (unsigned int)s_uiPortValue);
+        } else {
+            std::snprintf(statusRml, sizeof(statusRml),
+                "<p><b>Status:</b> Offline | <b>Target:</b> %s:%u | <b>v0.1.1</b></p>",
+                curHost.c_str(), (unsigned int)s_uiPortValue);
+        }
+        g_ui->pane_add_rml(ctx, pane, statusRml, nullptr);
+
         g_ui->pane_add_section(ctx, pane, "Multiplayer Server Connection");
 
         UiControlDesc hostDesc = UI_CONTROL_DESC_INIT;
