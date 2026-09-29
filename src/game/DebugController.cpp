@@ -204,21 +204,21 @@ namespace {
         size_t peers = g_playerSync ? g_playerSync->GetRemotePlayers().size() : 0;
         uint8_t myId = (g_client && conn) ? g_client->GetPlayerID() : 0;
 
-        char statusRml[512];
+        char statusText[256];
         if (conn) {
-            std::snprintf(statusRml, sizeof(statusRml),
-                "<p><b>Status:</b> Connected (Hero #%u) | <b>Session:</b> %zu player(s) online | <b>v0.1.1</b></p>",
+            std::snprintf(statusText, sizeof(statusText),
+                "Status: Connected (Hero #%u) | Session: %zu player(s) online | v0.1.2",
                 (unsigned int)myId, peers);
         } else if (connecting) {
-            std::snprintf(statusRml, sizeof(statusRml),
-                "<p><b>Status:</b> Connecting to %s:%u ... | <b>v0.1.1</b></p>",
+            std::snprintf(statusText, sizeof(statusText),
+                "Status: Connecting to %s:%u ... | v0.1.2",
                 curHost.c_str(), (unsigned int)s_uiPortValue);
         } else {
-            std::snprintf(statusRml, sizeof(statusRml),
-                "<p><b>Status:</b> Offline | <b>Target:</b> %s:%u | <b>v0.1.1</b></p>",
+            std::snprintf(statusText, sizeof(statusText),
+                "Status: Offline | Target: %s:%u | v0.1.2",
                 curHost.c_str(), (unsigned int)s_uiPortValue);
         }
-        g_ui->pane_add_rml(ctx, pane, statusRml, nullptr);
+        g_ui->pane_add_text(ctx, pane, statusText, nullptr);
 
         g_ui->pane_add_section(ctx, pane, "Multiplayer Server Connection");
 
@@ -279,9 +279,9 @@ namespace {
 
         g_ui->pane_add_section(ctx, pane, "Keyboard Shortcuts");
         g_ui->pane_add_text(ctx, pane,
-            "F1: Help Guide | F2: Status | F5: Sync Test\n"
-            "F6: Chat Dialog | F7: Radar Beacon | F8: Wolf/Human\n"
-            "F9: Reconnect | F10: Reload 3D | F11: IP & Port Dialog", nullptr);
+            "F1: Guide | F2: Diagnostics | F3: Toggle 3D Dummy | F4: Dummy Motion\n"
+            "F5: Sync Test | F6: Chat Dialog | F7: Radar | F8: Wolf/Human\n"
+            "F9: Reconnect | F10: Reload 3D | F11: Connection Dialog", nullptr);
 
         return MOD_OK;
     }
@@ -289,6 +289,11 @@ namespace {
 
 DebugController::DebugController() {
     std::memset(m_keyStates, 0, sizeof(m_keyStates));
+    m_dummyActive = false;
+    m_dummyMotionMode = 0;
+    m_dummyAngle = 0.0f;
+    m_dummyPatrolDist = 0.0f;
+    m_dummyPatrolDir = 1;
 
     // Load saved connection settings from disk
     ConnectionConfig::EnsureLoaded();
@@ -386,6 +391,8 @@ void DebugController::Update() {
     // Check hotkeys
     if (JustPressed(VK_F1))  ShowHelpToast();
     if (JustPressed(VK_F2))  ShowStatusToast();
+    if (JustPressed(VK_F3))  ToggleDummyPlayer();
+    if (JustPressed(VK_F4))  ToggleDummyMotion();
     if (JustPressed(VK_F5))  TestWorldSync();
     if (JustPressed(VK_F6))  OpenChatDialog();
     if (JustPressed(VK_F7))  PingRadarAndBeacon();
@@ -393,12 +400,18 @@ void DebugController::Update() {
     if (JustPressed(VK_F9))  ReconnectNetwork();
     if (JustPressed(VK_F10)) ReloadPuppetActors();
     if (JustPressed(VK_F11)) OpenConnectionDialog();
+
+    // Drive local dummy animation / position update if active
+    if (m_dummyActive) {
+        UpdateDummySimulation();
+    }
 }
 
 void DebugController::ShowHelpToast() {
     PushNotification(
         "Multiplayer Hotkeys Guide",
         "<b>F1</b>: Guide | <b>F2</b>: Mod Status<br/>"
+        "<b>F3</b>: Toggle 3D Dummy | <b>F4</b>: Dummy Motion<br/>"
         "<b>F5</b>: World Sync | <b>F6</b>: Chat Dialog (Type)<br/>"
         "<b>F7</b>: Radar Ping | <b>F8</b>: Wolf/Human Form<br/>"
         "<b>F9</b>: Reconnect | <b>F10</b>: Reload 3D<br/>"
@@ -416,7 +429,7 @@ void DebugController::ShowStatusToast() {
     const char* stage = dComIfGp_getStartStageName();
     if (!stage) stage = "None";
 
-    fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    fopAc_ac_c* player = g_playerSync ? g_playerSync->GetPlayerActor() : nullptr;
     int room = player ? fopAcM_GetRoomNo(player) : 0;
     int hp = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
     int maxHp = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
@@ -427,16 +440,157 @@ void DebugController::ShowStatusToast() {
         "Net: %s (ID:%d) | Heroes: %zu<br/>"
         "Host: %s:%u<br/>"
         "Stage: %s (Rm:%d) | HP:%d/%d | Rup:%d<br/>"
-        "Form: %s",
+        "Form: %s | Dummy 3D: %s",
         conn ? "Connected" : (connecting ? "Connecting..." : "Offline"),
         (int)myId, remoteCount,
         ConnectionConfig::GetConfiguredHost("127.0.0.1").c_str(),
         ConnectionConfig::GetConfiguredPort(1234),
         stage, room, hp, maxHp, rupees,
-        (form == 1) ? "Wolf" : "Human"
+        (form == 1) ? "Wolf" : "Human",
+        m_dummyActive ? "Active" : "Off"
     );
 
     PushNotification("Multiplayer Diagnostics", statusBuf, 5500);
+}
+
+void DebugController::ToggleDummyPlayer() {
+    if (!g_playerSync) return;
+
+    if (g_playerSync->IsOnTitleScreen()) {
+        PushNotification("Dummy Spawn Error", "Enter a save file or stage first.");
+        return;
+    }
+
+    fopAc_ac_c* player = g_playerSync->GetPlayerActor();
+    if (!player) {
+        PushNotification("Dummy Spawn Error", "Link is not loaded in the world yet.");
+        return;
+    }
+    daAlink_c* localPlayer = reinterpret_cast<daAlink_c*>(player);
+
+    const char* currentStage = dComIfGp_getStartStageName();
+    if (!currentStage) currentStage = "F_SP103";
+    int roomNo = fopAcM_GetRoomNo(player);
+
+    // If already active or remote player 200 exists, toggle off (despawn)
+    bool dummyExists = m_dummyActive || (g_playerSync->GetRemotePlayers().find(200) != g_playerSync->GetRemotePlayers().end());
+
+    if (!dummyExists) {
+        m_dummyActive = true;
+        m_dummyMotionMode = 0;
+        m_dummyAngle = 0.0f;
+        m_dummyPatrolDist = 0.0f;
+        m_dummyPatrolDir = 1;
+
+        // Spawn dummy 220 units directly in front of Link facing him
+        float linkAngleRad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
+        float spawnX = localPlayer->current.pos.x + 220.0f * std::sin(linkAngleRad);
+        float spawnY = localPlayer->current.pos.y;
+        float spawnZ = localPlayer->current.pos.z + 220.0f * std::cos(linkAngleRad);
+        float spawnRotY = localPlayer->current.angle.y + 32768.0f;
+
+        SyncPositionPacket posPkt = {};
+        posPkt.x = spawnX;
+        posPkt.y = spawnY;
+        posPkt.z = spawnZ;
+        posPkt.rotY = spawnRotY;
+        posPkt.roomNo = static_cast<uint8_t>(roomNo);
+        std::strncpy(posPkt.stageName, currentStage, 8);
+
+        uint8_t form = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getTransformStatus();
+
+        g_playerSync->ApplyRemotePosition(200, posPkt);
+        g_playerSync->ApplyRemoteStatus(200, 12, 12, 50, form, 0, 0);
+
+        PushNotification("3D Puppet Test Dummy", "Hero 200 spawned in front of you!<br/>Press <b>F3</b> to despawn, <b>F4</b> to cycle motion.");
+    } else {
+        m_dummyActive = false;
+        g_playerSync->RemoveRemotePlayer(200);
+        PushNotification("3D Puppet Test Dummy", "Despawned test dummy (Hero 200).");
+    }
+}
+
+void DebugController::ToggleDummyMotion() {
+    if (!m_dummyActive) {
+        ToggleDummyPlayer();
+        return;
+    }
+
+    m_dummyMotionMode = (m_dummyMotionMode + 1) % 3;
+
+    if (m_dummyMotionMode == 0) {
+        PushNotification("Dummy Movement", "Mode: <b>Standing Idle</b> (Bind / A-pose inspection)");
+    } else if (m_dummyMotionMode == 1) {
+        PushNotification("Dummy Movement", "Mode: <b>Orbiting Link</b> (360-degree rotation & lighting check)");
+    } else {
+        PushNotification("Dummy Movement", "Mode: <b>Patrol Walk</b> (Front-to-back walking motion)");
+    }
+}
+
+void DebugController::UpdateDummySimulation() {
+    if (!g_playerSync || !m_dummyActive) return;
+
+    if (g_playerSync->IsOnTitleScreen()) {
+        m_dummyActive = false;
+        g_playerSync->RemoveRemotePlayer(200);
+        return;
+    }
+
+    fopAc_ac_c* player = g_playerSync->GetPlayerActor();
+    if (!player) return;
+    daAlink_c* localPlayer = reinterpret_cast<daAlink_c*>(player);
+
+    const char* currentStage = dComIfGp_getStartStageName();
+    if (!currentStage) currentStage = "F_SP103";
+    int roomNo = fopAcM_GetRoomNo(player);
+
+    SyncPositionPacket posPkt = {};
+    posPkt.y = localPlayer->current.pos.y;
+    posPkt.roomNo = static_cast<uint8_t>(roomNo);
+    std::strncpy(posPkt.stageName, currentStage, 8);
+
+    uint32_t animId = 0;
+
+    if (m_dummyMotionMode == 0) {
+        float rad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
+        posPkt.x = localPlayer->current.pos.x + 220.0f * std::sin(rad);
+        posPkt.z = localPlayer->current.pos.z + 220.0f * std::cos(rad);
+        posPkt.rotY = localPlayer->current.angle.y + 32768.0f;
+        animId = 0;
+    } else if (m_dummyMotionMode == 1) {
+        m_dummyAngle += 0.025f;
+        if (m_dummyAngle > 6.2831853f) m_dummyAngle -= 6.2831853f;
+
+        posPkt.x = localPlayer->current.pos.x + 250.0f * std::sin(m_dummyAngle);
+        posPkt.z = localPlayer->current.pos.z + 250.0f * std::cos(m_dummyAngle);
+        float tangentAngleRad = m_dummyAngle + 1.5707963f;
+        posPkt.rotY = tangentAngleRad * (32768.0f / 3.14159265f);
+        animId = 1;
+    } else {
+        m_dummyPatrolDist += m_dummyPatrolDir * 3.0f;
+        if (m_dummyPatrolDist > 300.0f) {
+            m_dummyPatrolDist = 300.0f;
+            m_dummyPatrolDir = -1;
+        } else if (m_dummyPatrolDist < 120.0f) {
+            m_dummyPatrolDist = 120.0f;
+            m_dummyPatrolDir = 1;
+        }
+
+        float rad = localPlayer->current.angle.y * (3.14159265f / 32768.0f);
+        posPkt.x = localPlayer->current.pos.x + m_dummyPatrolDist * std::sin(rad);
+        posPkt.z = localPlayer->current.pos.z + m_dummyPatrolDist * std::cos(rad);
+        posPkt.rotY = (m_dummyPatrolDir > 0) ? localPlayer->current.angle.y : (localPlayer->current.angle.y + 32768.0f);
+        animId = 1;
+    }
+
+    g_playerSync->ApplyRemotePosition(200, posPkt);
+
+    auto& rem = g_playerSync->GetRemotePlayers();
+    auto it = rem.find(200);
+    if (it != rem.end()) {
+        it->second.framesIdle = 0;
+        it->second.animationId = animId;
+    }
 }
 
 void DebugController::TestWorldSync() {

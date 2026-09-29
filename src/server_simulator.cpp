@@ -28,7 +28,14 @@
 // Status payload: 8 bytes (health, maxHealth, animID)
 // =============================================================================
 
-int main() {
+int main(int argc, char* argv[]) {
+    bool enableGhostMode = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--ghost") == 0) {
+            enableGhostMode = true;
+        }
+    }
+
     if (enet_initialize() != 0) {
         std::cerr << "An error occurred while initializing ENet.\n";
         return 1;
@@ -50,6 +57,7 @@ int main() {
     std::cout << "===========================================\n";
     std::cout << " TWILIGHT PRINCESS MULTIPLAYER DEDICATED SERVER\n";
     std::cout << " Running on port " << port << "...\n";
+    std::cout << " Ghost Mode: " << (enableGhostMode ? "ENABLED (--ghost)" : "DISABLED (Clean Relay)") << "\n";
     std::cout << " Waiting for heroes to connect...\n";
     std::cout << "===========================================\n";
 
@@ -177,7 +185,7 @@ int main() {
                     // with a position offset to simulate a second player.
                     // The ghost uses playerID=200 (well outside normal range).
 
-                    if (peerToID.size() == 1) {
+                    if (enableGhostMode && peerToID.size() == 1) {
                         // Position packet: 2-byte header + 25-byte payload = 27 bytes
                         if (type == PACKET_POSITION && event.packet->dataLength == 27) {
                             // Deserialize, offset, reserialize

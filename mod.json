@@ -1,7 +1,7 @@
 {
     "id": "tp_multiplayer_mod",
     "name": "Twilight Princess Multiplayer",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "author": "roptor",
     "description": "Minimalist co-op multiplayer framework for The Legend of Zelda: Twilight Princess with synchronized 3D puppets, world states, and companion radar.",
     "icon": "res/icon.png",

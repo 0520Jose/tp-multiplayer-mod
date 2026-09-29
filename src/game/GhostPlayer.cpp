@@ -45,23 +45,9 @@ static void SafeModelCalc(J3DModel* model) {
     }
 }
 
-static void DisableMipmapsForModel(J3DModel* model) {
-    if (!model) return;
-    J3DModelData* modelData = model->getModelData();
-    if (!modelData) return;
-    J3DTexture* tex = modelData->getTexture();
-    if (!tex) return;
-
-    for (u16 i = 0; i < tex->getNum(); ++i) {
-        ResTIMG* timg = tex->getResTIMG(i);
-        if (timg) {
-            timg->maxLOD = 0;
-            timg->minFilter = 1; // GX_LINEAR (Pure bilinear, no mipmaps)
-#if TARGET_PC
-            tex->loadGXTexObj(i);
-#endif
-        }
-    }
+static void DisableMipmapsForModel(J3DModel*) {
+    // No-op: Do not mutate shared ResTIMG structures to avoid conflicting with
+    // Dusklight engine texture caches and the Cosmetics mod.
 }
 
 daGhostPlayer_c::daGhostPlayer_c() {

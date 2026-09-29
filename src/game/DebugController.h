@@ -34,11 +34,22 @@ private:
 
     void ShowHelpToast();
     void ShowStatusToast();
+    void ToggleDummyPlayer();
+    void ToggleDummyMotion();
     void TestWorldSync();
     void PingRadarAndBeacon();
     void ToggleTransformForm();
     void ReconnectNetwork();
     void ReloadPuppetActors();
 
+    void UpdateDummySimulation();
+
     bool m_keyStates[256];
+
+    // Dummy test player state (Hero 200)
+    bool m_dummyActive;
+    int m_dummyMotionMode; // 0 = Idle, 1 = Orbit Link, 2 = Patrol line
+    float m_dummyAngle;
+    float m_dummyPatrolDist;
+    int m_dummyPatrolDir;
 };
