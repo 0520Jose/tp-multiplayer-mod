@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include <cmath>
+#include <cstring>
 #include "network/PacketSerializer.h"
 #include "network/NetworkTypes.h"
 #include "network/ConnectionConfig.h"
@@ -60,6 +61,9 @@ int main() {
 
     std::map<ENetPeer*, uint8_t> peerToID;  // Maps peer -> assigned ID
     std::set<uint8_t> usedIDs;               // Set of IDs currently in use
+    // BUG 4 FIX: Monotonic counter incremented on every new connection.
+    // Ghost Mode uses this to detect reconnects and reset its stale static state.
+    uint32_t ghostSessionId = 0;
 
     // Assigns the lowest available player ID to a peer
     auto assignPlayerID = [&](ENetPeer* peer) -> uint8_t {
@@ -108,8 +112,15 @@ int main() {
                     std::cout << "[+] Hero connected! Assigned ID=" << (int)id
                               << " (Total: " << peerToID.size() << ")\n";
 
+                    // BUG 4 FIX: Increment session counter so Ghost Mode resets its
+                    // static position state on the next position packet. Without this,
+                    // a reconnecting solo player would see the ghost start at the stale
+                    // position from the previous session.
+                    ghostSessionId++;
+
                     // Tell the new client their assigned ID
                     sendControlPacket(event.peer, PACKET_PLAYER_ASSIGN, id);
+                    enet_host_flush(server);
                     break;
                 }
 
@@ -142,7 +153,7 @@ int main() {
                                 event.packet->data,
                                 event.packet->dataLength,
                                 event.packet->flags);
-                            enet_peer_send(targetPeer, 0, copy);
+                            enet_peer_send(targetPeer, event.channelID, copy);
                         }
                     }
 
@@ -163,33 +174,50 @@ int main() {
                             SyncPositionPacket posData =
                                 PacketSerializer::DeserializeSyncPosition(payload);
 
+                            // BUG 4 FIX: Use statics keyed to ghostSessionId so that
+                            // when the player disconnects and reconnects, Ghost Mode
+                            // starts fresh instead of resuming a stale position.
+                            static uint32_t s_knownSession = 0xFFFFFFFF;
                             static int ghostTick = 0;
-                            static SyncPositionPacket ghostPos = posData;
+                            static SyncPositionPacket ghostPos;
+                            static int packetLogCounter = 0;
 
-                            if (ghostTick == 0) {
+                            if (s_knownSession != ghostSessionId) {
+                                // New session: reset all ghost state
+                                s_knownSession = ghostSessionId;
+                                ghostTick = 0;
+                                packetLogCounter = 0;
                                 ghostPos = posData;
-                                ghostPos.x += 150.0f; // Empezar un poco al lado
+                                ghostPos.x += 150.0f; // Start next to the player
                                 ghostPos.z += 150.0f;
+                            }
+
+                            if (++packetLogCounter % 30 == 1) {
+                                std::cout << "[~] [Ghost Mode] Relaying Hero (Pos: " << (int)posData.x
+                                          << ", " << (int)posData.y << ", " << (int)posData.z
+                                          << " | Stage: " << posData.stageName << ") -> Ghost 200\n";
+                            }
+
+                            if (ghostTick < 150) {
+                                // Phase 1: Walk toward +X
+                                ghostPos.x += 5.0f;
+                                ghostPos.rotY = 16384.0f; // 90 degrees
+                            } else if (ghostTick < 300) {
+                                // Phase 2: Walk toward -Z
+                                ghostPos.z -= 5.0f;
+                                ghostPos.rotY = 32768.0f; // 180 degrees
+                            } else if (ghostTick < 450) {
+                                // Phase 3: Stand still
+                            } else {
+                                ghostTick = 0; // Restart cycle
                             }
                             ghostTick++;
 
-                            if (ghostTick < 150) {
-                                // Fase 1: Caminar hacia +X (simula adelante)
-                                ghostPos.x += 5.0f;
-                                ghostPos.rotY = 16384.0f; // 90 grados
-                            } else if (ghostTick < 300) {
-                                // Fase 2: Caminar hacia -Z (simula girar a la izquierda)
-                                ghostPos.z -= 5.0f;
-                                ghostPos.rotY = 32768.0f; // 180 grados
-                            } else if (ghostTick < 450) {
-                                // Fase 3: Detenido
-                            } else {
-                                // Reiniciar ciclo
-                                ghostTick = 0;
-                            }
-
-                            // Mantener a la misma altura que el jugador para no caer del mapa
+                            // Stay at the player's Y so the ghost doesn't fall through the map
                             ghostPos.y = posData.y;
+                            // Mirror room and stage so the ghost passes visibility checks
+                            ghostPos.roomNo = posData.roomNo;
+                            std::memcpy(ghostPos.stageName, posData.stageName, 8);
 
                             std::vector<uint8_t> newPayload =
                                 PacketSerializer::SerializeSyncPosition(ghostPos);
