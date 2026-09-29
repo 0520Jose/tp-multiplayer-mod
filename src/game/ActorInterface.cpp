@@ -240,7 +240,7 @@ void PlayerSync::UpdateAllRemotePlayers() {
                     csXyz rot(0, (s16)state.renderRotY, 0);
                     int roomNo = static_cast<int>(localRoom);
 
-                    if (g_actorService && daGhostPlayer_c::sActorHandle != 0) {
+                    if (g_actorService && daGhostPlayer_c::sProcName != -1) {
                         ActorSpawnParams params = {};
                         params.parameters = (uint32_t)it->first;
                         params.argument = -1;
@@ -251,7 +251,7 @@ void PlayerSync::UpdateAllRemotePlayers() {
                         params.create_function = nullptr;
 
                         ActorId outId = 0;
-                        if (g_actorService->create_actor_from_name(mod_ctx, DA_GHOST_PLAYER_NAME, &params, &outId) == MOD_OK) {
+                        if (g_actorService->create_actor(mod_ctx, daGhostPlayer_c::sProcName, &params, &outId) == MOD_OK) {
                             state.actorID = outId;
                         }
                     }
