@@ -100,12 +100,52 @@ daGhostPlayer_c::~daGhostPlayer_c() {
 }
 
 int daGhostPlayer_c::CreateHeap() {
-    // 3D mesh rendering of Link is explicitly marked as PENDIENTE.
-    // Models are kept null to prevent graphics pipeline crashes while co-op systems run.
-    mpModel = nullptr;
-    mpHatModel = nullptr;
-    mpFaceModel = nullptr;
-    mpHandModel = nullptr;
+    daAlink_c* localPlayer = (daAlink_c*)dComIfGp_getPlayer(0);
+    if (!localPlayer || !localPlayer->mpLinkModel) {
+        return 0;
+    }
+
+    J3DModelData* bodyData = localPlayer->mpLinkModel->getModelData();
+    if (!bodyData) {
+        return 0;
+    }
+
+    // 1. Body model (al.bmd / bl.bmd)
+    mpModel = mDoExt_J3DModel__create(bodyData, 0x80000, 0x11000084);
+    if (!mpModel) {
+        return 0;
+    }
+    mpModel->setUserArea(0);
+
+    // 2. Hat / Hair model (al_head.bmd / bl_head.bmd)
+    if (localPlayer->mpLinkHatModel && localPlayer->mpLinkHatModel->getModelData()) {
+        mpHatModel = mDoExt_J3DModel__create(localPlayer->mpLinkHatModel->getModelData(), 0x80000, 0x11000084);
+        if (mpHatModel) {
+            mpHatModel->setUserArea(0);
+        }
+    }
+
+    // 3. Face / Expression model (al_face.bmd / zl_face.bmd)
+    if (localPlayer->mpLinkFaceModel && localPlayer->mpLinkFaceModel->getModelData()) {
+        mpFaceModel = mDoExt_J3DModel__create(localPlayer->mpLinkFaceModel->getModelData(), 0x80000, 0x11000084);
+        if (mpFaceModel) {
+            mpFaceModel->setUserArea(0);
+        }
+    }
+
+    // 4. Hand model (al_hands.bmd / bl_hands.bmd)
+    if (localPlayer->mpLinkHandModel && localPlayer->mpLinkHandModel->getModelData()) {
+        mpHandModel = mDoExt_J3DModel__create(localPlayer->mpLinkHandModel->getModelData(), 0x80000, 0x11000084);
+        if (mpHandModel) {
+            mpHandModel->setUserArea(0);
+        }
+    }
+
+    DisableMipmapsForModel(mpModel);
+    DisableMipmapsForModel(mpHatModel);
+    DisableMipmapsForModel(mpFaceModel);
+    DisableMipmapsForModel(mpHandModel);
+
     return 1;
 }
 
@@ -117,7 +157,9 @@ int daGhostPlayer_c::create() {
     mpFaceModel = nullptr;
     mpHandModel = nullptr;
 
-    fopAcM_entrySolidHeap(this, (heapCallbackFunc)CreateHeapCallback, 0x1000);
+    scale.x = 1.0f;
+    scale.y = 1.0f;
+    scale.z = 1.0f;
 
     dKy_tevstr_init(&tevStr, dComIfGp_roomControl_getStayNo(), 0xFF);
     
@@ -139,33 +181,19 @@ int daGhostPlayer_c::create() {
     tevStr.AmbCol.b = 255;
     tevStr.AmbCol.a = 255;
 
+    // Solid heap allocation for character submodels (192 KB)
+    if (!fopAcM_entrySolidHeap(this, (heapCallbackFunc)CreateHeapCallback, 0x30000)) {
+        // Models not loaded in memory yet; retry next frame
+        return static_cast<int>(cPhs_INIT_e);
+    }
+
+    if (mpModel) {
+        fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
+    }
+
     fopAcM_setCullSizeBox(this, -300.0f, -0.0f, -300.0f, 300.0f, 300.0f, 300.0f);
 
     return cPhs_COMPLEATE_e;
-}
-
-static void TransferModelPose(J3DModel* src, J3DModel* dst, MtxP dstBase, MtxP srcInvBase) {
-    if (!src || !dst) return;
-    
-    J3DModelData* srcData = src->getModelData();
-    J3DModelData* dstData = dst->getModelData();
-    if (!srcData || !dstData) return;
-    
-    u16 count = srcData->getJointNum();
-    if (dstData->getJointNum() < count) {
-        count = dstData->getJointNum();
-    }
-    
-    for (u16 i = 0; i < count; ++i) {
-        MtxP srcMtx = src->getAnmMtx(i);
-        if (srcMtx) {
-            Mtx localMtx;
-            MTXConcat(srcInvBase, srcMtx, localMtx);
-            Mtx finalMtx;
-            MTXConcat(dstBase, localMtx, finalMtx);
-            dst->setAnmMtx(i, finalMtx);
-        }
-    }
 }
 
 int daGhostPlayer_c::Execute() {
@@ -184,72 +212,73 @@ int daGhostPlayer_c::Execute() {
 
     tevStr.room_no = dComIfGp_roomControl_getStayNo();
 
-    // Maintain actor position and rotation matrix for world/collision presence
-    mDoMtx_stack_c::push();
-    mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
-    mDoMtx_stack_c::YrotM(shape_angle.y);
-    mDoMtx_stack_c::scaleM(scale);
     if (mpModel) {
+        mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
+        mDoMtx_stack_c::YrotM(shape_angle.y);
+        mDoMtx_stack_c::scaleM(scale);
         mpModel->setBaseTRMtx(mDoMtx_stack_c::get());
-        fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
-    } else {
-        fopAcM_SetMtx(this, mDoMtx_stack_c::get());
-    }
-    mDoMtx_stack_c::pop();
 
-    SafeModelCalc(mpModel);
-    SafeModelCalc(mpHatModel);
-    SafeModelCalc(mpFaceModel);
-    SafeModelCalc(mpHandModel);
+        // 1. Calculate body joints
+        SafeModelCalc(mpModel);
 
-    if (mpModel) {
-        if (mpHatModel) mpHatModel->setBaseTRMtx(mpModel->getAnmMtx(4));
-        if (mpFaceModel) mpFaceModel->setBaseTRMtx(mpModel->getAnmMtx(4));
+        // 2. Hat / Hair attached to Head joint (4)
+        if (mpHatModel) {
+            mpHatModel->setBaseTRMtx(mpModel->getAnmMtx(4));
+            SafeModelCalc(mpHatModel);
+        }
+
+        // 3. Face attached to Head joint (4)
+        if (mpFaceModel) {
+            mpFaceModel->setBaseTRMtx(mpModel->getAnmMtx(4));
+            SafeModelCalc(mpFaceModel);
+        }
+
+        // 4. Hands attached to Left Wrist (9) and Right Wrist (14 / 0xE)
         if (mpHandModel) {
             mpHandModel->setBaseTRMtx(mpModel->getBaseTRMtx());
+            SafeModelCalc(mpHandModel);
+            mpHandModel->setAnmMtx(1, mpModel->getAnmMtx(9));
+            mpHandModel->setAnmMtx(2, mpModel->getAnmMtx(0xE));
         }
+
+        fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
+    } else {
+        mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
+        mDoMtx_stack_c::YrotM(shape_angle.y);
+        mDoMtx_stack_c::scaleM(scale);
+        fopAcM_SetMtx(this, mDoMtx_stack_c::get());
     }
 
     return 1;
 }
 
 int daGhostPlayer_c::Draw() {
-    // Only perform 3D drawing passes when models are present
     if (mpModel) {
+        daAlink_c* localPlayer = (daAlink_c*)dComIfGp_getPlayer(0);
+        if (localPlayer) {
+            tevStr = localPlayer->tevStr;
+        } else {
+            g_env_light.settingTevStruct(0, &current.pos, &tevStr);
+        }
+
+        tevStr.mFogStartZ = 0.0f;
+        tevStr.mFogEndZ = 0.0f;
+
         DisableMipmapsForModel(mpModel);
-        g_env_light.settingTevStruct(0, &current.pos, &tevStr);
-
-        J3DJointCallBack savedCallbacks[128];
-        ClearJointCallbacks(mpModel, savedCallbacks);
-
-        g_env_light.setLightTevColorType_MAJI(mpModel, &tevStr);
-        mDoExt_modelEntryDL(mpModel);
-
-        RestoreJointCallbacks(mpModel, savedCallbacks);
-    }
-
-    if (mpHandModel) {
         DisableMipmapsForModel(mpHandModel);
-        g_env_light.setLightTevColorType_MAJI(mpHandModel, &tevStr);
-        mpHandModel->calcMaterial();
-        mpHandModel->diff();
-        mDoExt_modelEntryDL(mpHandModel);
-    }
-
-    if (mpHatModel) {
         DisableMipmapsForModel(mpHatModel);
-        g_env_light.setLightTevColorType_MAJI(mpHatModel, &tevStr);
-        mpHatModel->calcMaterial();
-        mpHatModel->diff();
-        mDoExt_modelEntryDL(mpHatModel);
-    }
-
-    if (mpFaceModel) {
         DisableMipmapsForModel(mpFaceModel);
-        g_env_light.setLightTevColorType_MAJI(mpFaceModel, &tevStr);
-        mpFaceModel->calcMaterial();
-        mpFaceModel->diff();
-        mDoExt_modelEntryDL(mpFaceModel);
+
+        auto DrawSubModel = [&](J3DModel* subModel) {
+            if (!subModel) return;
+            g_env_light.setLightTevColorType_MAJI(subModel, &tevStr);
+            mDoExt_modelEntryDL(subModel);
+        };
+
+        DrawSubModel(mpModel);
+        DrawSubModel(mpHandModel);
+        DrawSubModel(mpHatModel);
+        DrawSubModel(mpFaceModel);
     }
 
     return 1;
@@ -261,6 +290,7 @@ int daGhostPlayer_c::Delete() {
     mpFaceModel = nullptr;
     mpHandModel = nullptr;
     m_particleEmitter = nullptr;
+    fopAcM_DeleteHeap(this);
     return 1;
 }
 
