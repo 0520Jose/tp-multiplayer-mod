@@ -28,9 +28,18 @@ PlayerSync::~PlayerSync() {
 }
 
 fopAc_ac_c* PlayerSync::GetPlayerActor() {
-    fopAc_ac_c* player = dComIfGp_getPlayer(0);
-    if (!player) return nullptr;
-    if (fpcM_GetProfName(player) != fpcNm_ALINK_e) return nullptr;
+    daAlink_c* link = daAlink_getAlinkActorClass();
+    if (!link) {
+        m_player = nullptr;
+        m_realPlayerID = 0xFFFFFFFF;
+        return nullptr;
+    }
+    fopAc_ac_c* player = reinterpret_cast<fopAc_ac_c*>(link);
+    if (fpcM_GetProfName(player) != fpcNm_ALINK_e) {
+        m_player = nullptr;
+        m_realPlayerID = 0xFFFFFFFF;
+        return nullptr;
+    }
 
     m_player = player;
     m_realPlayerID = fopAcM_GetID(player);
@@ -39,8 +48,9 @@ fopAc_ac_c* PlayerSync::GetPlayerActor() {
 
 bool PlayerSync::IsOnTitleScreen() {
     const char* stage = dComIfGp_getStartStageName();
-    if (!stage) return true;
+    if (!stage || stage[0] == '\0') return true;
     if (std::strncmp(stage, "F_SP102", 7) == 0) return true; // Title Demo (Bridge of Eldin)
+    if (std::strncmp(stage, "F_SP112", 7) == 0) return true; // Title Demo
     if (std::strncmp(stage, "D_MN", 4) == 0) return true;    // Menus / File selection
     return false;
 }
@@ -50,6 +60,10 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
     packet.x = packet.y = packet.z = packet.rotY = 0.0f;
     std::memset(packet.stageName, 0, 8);
     packet.roomNo = 0;
+
+    if (IsOnTitleScreen()) {
+        return packet;
+    }
 
     m_player = GetPlayerActor();
     if (m_player) {
@@ -77,20 +91,24 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
     packet.actionFlags = 0;
     packet.currentAnimation = 0;
 
+    if (IsOnTitleScreen()) {
+        return packet;
+    }
+
     // Static state for motion detection — lives at function scope so both branches can access it.
     static float s_prevX     = 0.0f;
     static float s_prevZ     = 0.0f;
     static bool  s_prevValid = false;
 
     m_player = GetPlayerActor();
-    if (m_player) {
+    if (m_player && fpcM_GetProfName(m_player) == fpcNm_ALINK_e) {
         packet.health    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
         packet.maxHealth = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
         packet.rupees    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getRupee();
         packet.form      = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getTransformStatus();
 
-        daAlink_c* alink = (daAlink_c*)m_player;
-        if (alink && alink->checkHorseRide()) {
+        daAlink_c* alink = reinterpret_cast<daAlink_c*>(m_player);
+        if (alink && alink == daAlink_getAlinkActorClass() && alink->checkHorseRide()) {
             packet.actionFlags |= 1; // Bit 0: Horse Riding
         }
 

@@ -260,9 +260,10 @@ extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
 
     static int framesSincePlayerLoaded = 0;
 
-    if (g_playerSync && g_playerSync->GetPlayerActor() != nullptr &&
-        g_playerSync->GetLocalStatus().maxHealth > 0 &&
-        !g_playerSync->IsOnTitleScreen()) {
+    if (g_playerSync &&
+        !g_playerSync->IsOnTitleScreen() &&
+        g_playerSync->GetPlayerActor() != nullptr &&
+        g_playerSync->GetLocalStatus().maxHealth > 0) {
 
         framesSincePlayerLoaded++;
 
@@ -273,7 +274,7 @@ extern "C" MOD_EXPORT ModResult mod_update(ModError* out_error) {
     } else {
         framesSincePlayerLoaded = 0;
         g_isPlayerReady = false;
-        if (g_playerSync) {
+        if (g_playerSync && !g_playerSync->GetRemotePlayers().empty()) {
             g_playerSync->ResetAll();
         }
         if (g_worldSync) {

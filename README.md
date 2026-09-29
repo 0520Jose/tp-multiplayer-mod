@@ -1,21 +1,31 @@
-# Twilight Princess Multiplayer Mod (Dusklight)
+<p align="center">
+  <img src="res/banner.png" alt="The Legend of Zelda: Twilight Princess Multiplayer" width="100%" />
+</p>
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](#building)
-[![Target](https://img.shields.io/badge/target-Dusklight%20PC-blue)](#requirements)
-[![C++](https://img.shields.io/badge/standard-C%2B%2B20-darkblue)](#requirements)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<div align="center">
 
-An online multiplayer mod for *The Legend of Zelda: Twilight Princess* running on the **Dusklight** native PC port. It allows multiple players to explore the world together in real-time through decoupled puppet actors with interpolated physics, state replication, and low-latency UDP networking.
+# <img src="res/icon.png" width="40" height="40" alt="Mod Icon" style="vertical-align: middle;" /> Twilight Princess Multiplayer Mod
+
+[![Version](https://img.shields.io/badge/version-0.1.2-amber.svg)](#)
+[![Target](https://img.shields.io/badge/target-Dusklight%20PC-blue.svg)](#requirements)
+[![C++](https://img.shields.io/badge/standard-C%2B%2B20-darkblue.svg)](#requirements)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#building)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+*A minimalist co-op multiplayer framework for The Legend of Zelda: Twilight Princess running natively on the Dusklight PC engine.*
+
+</div>
 
 ---
 
 ## Key Features
 
-- **Decoupled Puppet Actor System (`daGhostPlayer_c`)**: Eliminates the engine's single-player singleton crash and camera hijacking by rendering remote players as independent game actors (`fopAc_ac_c`).
-- **Smooth Interpolation**: Client-side linear and angle interpolation (LERP) prevents visual jitter across network updates.
-- **Low-Latency Networking**: Powered by [ENet](http://enet.bespin.org/), featuring non-blocking UDP packets, delta synchronization, and automatic reconnection.
-- **Scene & Room Isolation**: Players in different stages or distant rooms are automatically filtered to preserve performance and prevent cross-map glitches.
-- **Built-in Ghost Simulator**: The dedicated relay server includes a Ghost Mode that reflects single-player movements to simulate a second player for hassle-free solo testing.
+- **Decoupled 3D Puppet Actor (`daGhostPlayer_c`)**: Independent puppet actors rendered with Link's full sub-model hierarchy (body, head, face, hands, sword, and shield) without hijacking camera or single-player state singletons.
+- **In-Game GUI & Chat**: Native text dialog (`F6`) to broadcast messages to all heroes, and a visual configuration modal (`F11`) or Dusklight Mods panel tab to configure server IP and port on the fly.
+- **World & Co-op Sync**: Real-time synchronization of dungeon chests, small keys, and story progression bits with automatic echo loop prevention.
+- **Companion Radar & Beacons**: Visual particle spirit beacons (`0x01B7`) and cardinal direction tracking (`F7`) to easily locate your co-op partner across Hyrule.
+- **Form & Status Replication**: Full support for Wolf Link / Human Link transformations, Epona horseback riding, health, and rupees.
+- **Low-Latency UDP Protocol**: Non-blocking ENet socket architecture operating at 15 Hz state transmission with local 60 FPS Hermite interpolation.
 
 ---
 
@@ -142,12 +152,32 @@ Copy the generated `.dusk` package into Dusklight's mod directory:
 copy build-msvc\mods\tp_multiplayer_mod.dusk ..\dusklight\mods\
 ```
 
-### 4. Custom Server Connection
-The mod connects to `127.0.0.1:1234` by default. You can override this using environment variables before launching Dusklight:
-```cmd
-set TP_MULTIPLAYER_HOST=192.168.1.50
-set TP_MULTIPLAYER_PORT=1234
-```
+### 4. Server Connection & In-Game Controls
+
+You can connect to a server in three convenient ways:
+- **In-Game GUI Modal (`F11`)**: Opens a native text dialog inside Dusklight to type the Server IP and Port.
+- **Dusklight Mods Tab**: Open the main menu, navigate to the **Mods** window, select **Twilight Princess Multiplayer**, and manage IP, port, and connection with live session telemetry.
+- **Configuration File / Environment Variables**: Edit `multiplayer_config.txt` or configure:
+  ```cmd
+  set TP_MULTIPLAYER_HOST=192.168.1.50
+  set TP_MULTIPLAYER_PORT=1234
+  ```
+
+#### Keyboard Verification Suite
+
+| Hotkey | Action | Description |
+| :---: | :--- | :--- |
+| **`F1`** | **Help Guide** | Displays on-screen guide of all multiplayer controls and hotkeys. |
+| **`F2`** | **Diagnostics** | Real-time status toast: connection state, Hero ID, stage, room, HP, rupees, form. |
+| **`F3`** | **Toggle 3D Dummy** | Spawns a 3D puppet dummy (Hero 200) in front of Link on first press; despawns on second press. |
+| **`F4`** | **Dummy Motion** | Cycles dummy motion between Idle (Bind pose), Orbit (360° rotation), and Patrol walking. |
+| **`F5`** | **World Sync Test** | Simulates chest opening, small key updates, and story flags across network. |
+| **`F6`** | **In-Game Chat** | Opens interactive text box modal to broadcast custom chat messages to peers. |
+| **`F7`** | **Companion Radar** | Pings spirit particle beacon (`0x01B7`) and cardinal direction of other players. |
+| **`F8`** | **Wolf / Human Form** | Toggles Link between Wolf and Human forms in real time. |
+| **`F9`** | **Quick Reconnect** | Fast reconnect against configured multiplayer host and port. |
+| **`F10`** | **Reload Puppets** | Cleans up and re-instantiates all remote 3D player actors. |
+| **`F11`** | **Connection Dialog** | Opens native modal dialog to change server IP and port on the fly. |
 
 ---
 
