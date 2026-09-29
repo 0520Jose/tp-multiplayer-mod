@@ -25,6 +25,8 @@ add_mod(tp_multiplayer_mod
         src/network/Client.cpp
         src/game/ActorInterface.cpp
         src/game/GhostPlayer.cpp
+        src/game/WorldSync.cpp
+        src/game/MapTracker.cpp
 )
 
 add_subdirectory(extern/enet)

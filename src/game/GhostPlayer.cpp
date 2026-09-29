@@ -10,6 +10,7 @@
 #include <JSystem/J3DGraphBase/J3DTexture.h>
 
 extern daAlink_c* localLink; // Necesario para la lgica del usuario
+extern PlayerSync* g_playerSync;
 
 static void SafeModelCalc(J3DModel* model) {
     if (!model) return;
@@ -115,6 +116,8 @@ int daGhostPlayer_c::CreateHeap() {
 }
 
 int daGhostPlayer_c::create() {
+    m_networkPlayerId = static_cast<uint8_t>(fopAcM_GetParam(this));
+
     if (!fopAcM_entrySolidHeap(this, (heapCallbackFunc)CreateHeapCallback, 0x30000)) {
         return cPhs_ERROR_e;
     }
@@ -169,20 +172,44 @@ static void TransferModelPose(J3DModel* src, J3DModel* dst, MtxP dstBase, MtxP s
 }
 
 int daGhostPlayer_c::Execute() {
+    m_networkPlayerId = static_cast<uint8_t>(fopAcM_GetParam(this));
+    if (g_playerSync) {
+        const auto& players = g_playerSync->GetRemotePlayers();
+        auto it = players.find(m_networkPlayerId);
+        if (it != players.end() && it->second.hasData) {
+            current.pos.x = it->second.renderX;
+            current.pos.y = it->second.renderY;
+            current.pos.z = it->second.renderZ;
+            current.angle.y = static_cast<s16>(it->second.renderRotY);
+            shape_angle.y = static_cast<s16>(it->second.renderRotY);
+        }
+    }
+
     tevStr.room_no = dComIfGp_roomControl_getStayNo();
+
+    if (mpModel) {
+        mDoMtx_stack_c::push();
+        mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
+        mDoMtx_stack_c::YrotM(shape_angle.y);
+        mDoMtx_stack_c::scaleM(scale);
+        mpModel->setBaseTRMtx(mDoMtx_stack_c::get());
+        mDoMtx_stack_c::pop();
+
+        fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
+    }
 
     SafeModelCalc(mpModel);
     SafeModelCalc(mpHatModel);
     SafeModelCalc(mpFaceModel);
     SafeModelCalc(mpHandModel);
 
-    mpHatModel->setBaseTRMtx(mpModel->getAnmMtx(4));
-    mpFaceModel->setBaseTRMtx(mpModel->getAnmMtx(4));
-    
-    mpHandModel->setBaseTRMtx(mpModel->getAnmMtx(9)); 
-    mpHandModel->setBaseTRMtx(mpModel->getAnmMtx(14));
-
-    fopAcM_SetMtx(this, mpModel->getBaseTRMtx());
+    if (mpModel) {
+        if (mpHatModel) mpHatModel->setBaseTRMtx(mpModel->getAnmMtx(4));
+        if (mpFaceModel) mpFaceModel->setBaseTRMtx(mpModel->getAnmMtx(4));
+        if (mpHandModel) {
+            mpHandModel->setBaseTRMtx(mpModel->getBaseTRMtx());
+        }
+    }
 
     return 1;
 }

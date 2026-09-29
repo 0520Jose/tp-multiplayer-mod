@@ -26,7 +26,7 @@ public:
 
     // --- Remote Players ---
     void ApplyRemotePosition(uint8_t playerID, const SyncPositionPacket& posData);
-    void ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint32_t animationId);
+    void ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint16_t rupees, uint8_t form, uint8_t actionFlags, uint32_t animationId);
     void RemoveRemotePlayer(uint8_t playerID);
 
     // --- Per-Frame Update ---

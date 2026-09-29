@@ -4,6 +4,9 @@
 #include <cmath>
 #include <cstring>
 #include <d/d_com_inf_game.h>
+#undef IN
+#undef OUT
+#include <d/actor/d_a_alink.h>
 #include <dolphin/gx/GXAurora.h>
 #include <m_Do/m_Do_ext.h>
 #include <f_pc/f_pc_name.h>
@@ -69,6 +72,9 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
     SyncStatusPacket packet;
     packet.health = 0;
     packet.maxHealth = 0;
+    packet.rupees = 0;
+    packet.form = 0;
+    packet.actionFlags = 0;
     packet.currentAnimation = 0;
 
     // Static state for motion detection — lives at function scope so both branches can access it.
@@ -80,26 +86,25 @@ SyncStatusPacket PlayerSync::GetLocalStatus() {
     if (m_player) {
         packet.health    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
         packet.maxHealth = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
+        packet.rupees    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getRupee();
+        packet.form      = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getTransformStatus();
 
-        // BUG 2 FIX: Capture a proxy animation state using XZ speed.
-        // Full BCK animation playback on the ghost would require loading animation
-        // resources from JKRArcFinder and creating a J3DAnmTransform controller —
-        // that is tracked as a future improvement. For now we transmit:
-        //   0 = idle (standing still)
-        //   1 = moving (walking / running / any locomotion)
-        // This lets the ghost at least reflect whether the remote player is moving.
+        daAlink_c* alink = (daAlink_c*)m_player;
+        if (alink && alink->checkHorseRide()) {
+            packet.actionFlags |= 1; // Bit 0: Horse Riding
+        }
+
+        // Capture locomotion status via XZ speed
         if (s_prevValid) {
             float dx     = m_player->current.pos.x - s_prevX;
             float dz     = m_player->current.pos.z - s_prevZ;
             float speed2 = dx * dx + dz * dz;
-            // Threshold: ~1.5 units/frame (~45 units/s at 30fps) to filter micro-jitter
             packet.currentAnimation = (speed2 > 2.25f) ? 1u : 0u;
         }
         s_prevX     = m_player->current.pos.x;
         s_prevZ     = m_player->current.pos.z;
         s_prevValid = true;
     } else {
-        // Reset when the player is not loaded so the next valid frame starts fresh.
         s_prevValid = false;
     }
     return packet;
@@ -143,10 +148,13 @@ void PlayerSync::ApplyRemotePosition(uint8_t playerID, const SyncPositionPacket&
     state.framesIdle = 0;
 }
 
-void PlayerSync::ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint32_t animationId) {
+void PlayerSync::ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint16_t rupees, uint8_t form, uint8_t actionFlags, uint32_t animationId) {
     auto& state = m_remotePlayers[playerID];
     state.health = health;
     state.maxHealth = maxHealth;
+    state.rupees = rupees;
+    state.form = form;
+    state.actionFlags = actionFlags;
     state.animationId = animationId;
 }
 
