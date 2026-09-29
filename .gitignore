@@ -3,6 +3,7 @@ dusklight/
 
 # Build output directories
 build/
+build-*/
 out/
 
 # IDE and editor directories
@@ -32,6 +33,12 @@ Makefile
 
 # Agent workspace (not tracked)
 .agent/
+
+# Local utility scripts
+scripts/
+
+# Local user configs
+multiplayer_config.txt
 
 # OS files
 Thumbs.db

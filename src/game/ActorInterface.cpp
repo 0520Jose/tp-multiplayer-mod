@@ -1,8 +1,12 @@
 #include "ActorInterface.h"
+#include "GhostPlayer.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <d/d_com_inf_game.h>
+#undef IN
+#undef OUT
+#include <d/actor/d_a_alink.h>
 #include <dolphin/gx/GXAurora.h>
 #include <m_Do/m_Do_ext.h>
 #include <f_pc/f_pc_name.h>
@@ -11,12 +15,12 @@
 
 extern Client* g_client;
 extern PlayerSync* g_playerSync;
+extern ModContext* mod_ctx;
+extern const ActorService* g_actorService;
 
 PlayerSync::PlayerSync() {
     m_player = nullptr;
-    m_realPlayer = nullptr;
     m_realPlayerID = 0xFFFFFFFF;
-    m_remoteModel = nullptr;
 }
 
 PlayerSync::~PlayerSync() {
@@ -25,37 +29,19 @@ PlayerSync::~PlayerSync() {
 
 fopAc_ac_c* PlayerSync::GetPlayerActor() {
     fopAc_ac_c* player = dComIfGp_getPlayer(0);
-
-    bool isGhost = false;
-    for (auto& pair : m_remotePlayers) {
-        if (player && fopAcM_GetID(player) == pair.second.actorID) {
-            isGhost = true;
-            break;
-        }
-    }
-
-    if (isGhost) {
-        if (m_realPlayer && fopAcM_SearchByID(m_realPlayerID) != nullptr) {
-            dComIfGp_setPlayer(0, m_realPlayer);
-            dComIfGp_setPlayerPtr(0, m_realPlayer);
-            player = m_realPlayer;
-        } else {
-            m_realPlayer = nullptr;
-            m_realPlayerID = 0xFFFFFFFF;
-            player = nullptr;
-        }
-    } else {
-        m_realPlayer = player;
-        if (player) m_realPlayerID = fopAcM_GetID(player);
-        else m_realPlayerID = 0xFFFFFFFF;
-    }
-
     if (!player) return nullptr;
     if (fpcM_GetProfName(player) != fpcNm_ALINK_e) return nullptr;
+
+    m_player = player;
+    m_realPlayerID = fopAcM_GetID(player);
     return player;
 }
 
 bool PlayerSync::IsOnTitleScreen() {
+    const char* stage = dComIfGp_getStartStageName();
+    if (!stage) return true;
+    if (std::strncmp(stage, "F_SP102", 7) == 0) return true; // Title Demo (Bridge of Eldin)
+    if (std::strncmp(stage, "D_MN", 4) == 0) return true;    // Menus / File selection
     return false;
 }
 
@@ -74,22 +60,52 @@ SyncPositionPacket PlayerSync::GetLocalPosition() {
         
         const char* stage = dComIfGp_getStartStageName();
         if (stage) std::strncpy(packet.stageName, stage, 8);
-        packet.roomNo = 0; // Temporarily disabled due to linker error
+
+        // BUG 1 FIX: fopAcM_GetRoomNo is already imported and used elsewhere in this file.
+        // The previous hardcoded 0 caused ghost actors to appear through room boundaries.
+        packet.roomNo = static_cast<uint8_t>(fopAcM_GetRoomNo(m_player));
     }
     return packet;
 }
 
 SyncStatusPacket PlayerSync::GetLocalStatus() {
     SyncStatusPacket packet;
+    packet.health = 0;
+    packet.maxHealth = 0;
+    packet.rupees = 0;
+    packet.form = 0;
+    packet.actionFlags = 0;
+    packet.currentAnimation = 0;
+
+    // Static state for motion detection — lives at function scope so both branches can access it.
+    static float s_prevX     = 0.0f;
+    static float s_prevZ     = 0.0f;
+    static bool  s_prevValid = false;
+
     m_player = GetPlayerActor();
     if (m_player) {
-        packet.health = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
+        packet.health    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getLife();
         packet.maxHealth = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getMaxLife();
-        packet.currentAnimation = 0; 
+        packet.rupees    = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getRupee();
+        packet.form      = g_dComIfG_gameInfo.info.getPlayer().getPlayerStatusA().getTransformStatus();
+
+        daAlink_c* alink = (daAlink_c*)m_player;
+        if (alink && alink->checkHorseRide()) {
+            packet.actionFlags |= 1; // Bit 0: Horse Riding
+        }
+
+        // Capture locomotion status via XZ speed
+        if (s_prevValid) {
+            float dx     = m_player->current.pos.x - s_prevX;
+            float dz     = m_player->current.pos.z - s_prevZ;
+            float speed2 = dx * dx + dz * dz;
+            packet.currentAnimation = (speed2 > 2.25f) ? 1u : 0u;
+        }
+        s_prevX     = m_player->current.pos.x;
+        s_prevZ     = m_player->current.pos.z;
+        s_prevValid = true;
     } else {
-        packet.health = 0;
-        packet.maxHealth = 0;
-        packet.currentAnimation = 0;
+        s_prevValid = false;
     }
     return packet;
 }
@@ -132,10 +148,21 @@ void PlayerSync::ApplyRemotePosition(uint8_t playerID, const SyncPositionPacket&
     state.framesIdle = 0;
 }
 
-void PlayerSync::ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint32_t animationId) {
+void PlayerSync::ApplyRemoteStatus(uint8_t playerID, int16_t health, int16_t maxHealth, uint16_t rupees, uint8_t form, uint8_t actionFlags, uint32_t animationId) {
     auto& state = m_remotePlayers[playerID];
+    if (state.hasData && state.form != form && state.actorID != 0xFFFFFFFF) {
+        fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
+        if (ghost && daGhostPlayer_c::sProcName != -1 &&
+            fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+            fopAcM_delete(ghost);
+        }
+        state.actorID = 0xFFFFFFFF;
+    }
     state.health = health;
     state.maxHealth = maxHealth;
+    state.rupees = rupees;
+    state.form = form;
+    state.actionFlags = actionFlags;
     state.animationId = animationId;
 }
 
@@ -144,7 +171,14 @@ void PlayerSync::RemoveRemotePlayer(uint8_t playerID) {
     if (it != m_remotePlayers.end()) {
         if (it->second.actorID != 0xFFFFFFFF) {
             fopAc_ac_c* ghost = fopAcM_SearchByID(it->second.actorID);
-            if (ghost) fopAcM_delete(ghost);
+            // BUG 5 FIX: Verify the actor is still a ghost before deleting.
+            // If the engine already freed this actor and reused the ID for a different
+            // actor (e.g. during a stage transition), we must NOT delete the new actor.
+            if (ghost && daGhostPlayer_c::sProcName != -1 &&
+                fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+                fopAcM_delete(ghost);
+            }
+            it->second.actorID = 0xFFFFFFFF; // Invalidate regardless
         }
         m_remotePlayers.erase(it);
     }
@@ -154,7 +188,14 @@ void PlayerSync::ResetAll() {
     for (auto& pair : m_remotePlayers) {
         if (pair.second.actorID != 0xFFFFFFFF) {
             fopAc_ac_c* ghost = fopAcM_SearchByID(pair.second.actorID);
-            if (ghost) fopAcM_delete(ghost);
+            // BUG 5 FIX: Same type guard as RemoveRemotePlayer.
+            // During stage transitions the engine clears its actor list before calling
+            // mod_update(); by then these IDs may be invalid or reused.
+            if (ghost && daGhostPlayer_c::sProcName != -1 &&
+                fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+                fopAcM_delete(ghost);
+            }
+            pair.second.actorID = 0xFFFFFFFF; // Invalidate before erase
         }
     }
     m_remotePlayers.clear();
@@ -162,6 +203,10 @@ void PlayerSync::ResetAll() {
 
 void PlayerSync::UpdateAllRemotePlayers() {
     const char* currentStage = dComIfGp_getStartStageName();
+    fopAc_ac_c* localPlayer = GetPlayerActor();
+    uint8_t localRoom = localPlayer
+        ? static_cast<uint8_t>(fopAcM_GetRoomNo(localPlayer))
+        : static_cast<uint8_t>(dComIfGp_roomControl_getStayNo());
 
     for (auto it = m_remotePlayers.begin(); it != m_remotePlayers.end();) {
         auto& state = it->second;
@@ -170,7 +215,12 @@ void PlayerSync::UpdateAllRemotePlayers() {
         if (state.framesIdle > IDLE_TIMEOUT_FRAMES) {
             if (state.actorID != 0xFFFFFFFF) {
                 fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
-                if (ghost) fopAcM_delete(ghost);
+                // BUG 5 FIX: Type guard before timeout-delete
+                if (ghost && daGhostPlayer_c::sProcName != -1 &&
+                    fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+                    fopAcM_delete(ghost);
+                }
+                state.actorID = 0xFFFFFFFF;
             }
             it = m_remotePlayers.erase(it);
             continue;
@@ -181,32 +231,57 @@ void PlayerSync::UpdateAllRemotePlayers() {
                 state.lerpT += LERP_SPEED;
                 if (state.lerpT > 1.0f) state.lerpT = 1.0f;
             }
-            state.renderX = Lerp(state.prevX, state.targetX, state.lerpT);
-            state.renderY = Lerp(state.prevY, state.targetY, state.lerpT);
-            state.renderZ = Lerp(state.prevZ, state.targetZ, state.lerpT);
+            state.renderX    = Lerp(state.prevX,    state.targetX,    state.lerpT);
+            state.renderY    = Lerp(state.prevY,     state.targetY,    state.lerpT);
+            state.renderZ    = Lerp(state.prevZ,    state.targetZ,    state.lerpT);
             state.renderRotY = LerpAngle(state.prevRotY, state.targetRotY, state.lerpT);
 
-            // Stage isolation check
+            // Visibility: same stage check. We isolate by stage (e.g. F_SP103 for Ordon).
+            // Sub-room differences within the same stage (indoor/outdoor boundaries) should
+            // not cull the actor, as Twilight Princess stages share a unified world space.
             bool sameStage = currentStage && (std::strncmp(state.stageName, currentStage, 8) == 0);
-            bool visible = sameStage;
+            bool visible   = sameStage;
 
             if (visible) {
                 if (state.actorID == 0xFFFFFFFF) {
                     cXyz pos(state.renderX, state.renderY, state.renderZ);
                     csXyz rot(0, (s16)state.renderRotY, 0);
-                    state.actorID = fopAcM_create(fpcNm_ALINK_e, 0, &pos, 0, &rot, nullptr, -1);
+                    int roomNo = static_cast<int>(localRoom);
+
+                    if (g_actorService && daGhostPlayer_c::sProcName != -1) {
+                        ActorSpawnParams params = {};
+                        params.parameters = (uint32_t)it->first;
+                        params.argument = -1;
+                        params.room_num = (int8_t)roomNo;
+                        params.position = {pos.x, pos.y, pos.z};
+                        params.angle = {0, (int16_t)state.renderRotY, 0};
+                        params.scale = {1.0f, 1.0f, 1.0f};
+                        params.create_function = nullptr;
+
+                        ActorId outId = 0;
+                        if (g_actorService->create_actor(mod_ctx, daGhostPlayer_c::sProcName, &params, &outId) == MOD_OK) {
+                            state.actorID = outId;
+                        }
+                    }
+
+                    if (state.actorID == 0xFFFFFFFF && daGhostPlayer_c::sProcName != -1) {
+                        cXyz scale(1.0f, 1.0f, 1.0f);
+                        state.actorID = fopAcM_create(daGhostPlayer_c::sProcName, 0xFFFF, (u32)it->first, &pos, roomNo, &rot, &scale, -1, nullptr);
+                    }
                 } else {
                     fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
-                    if (ghost) {
-                        // Position logic handled in hooks.
-                    } else {
-                        state.actorID = 0xFFFFFFFF; // It was deleted by the engine (e.g. stage transition)
+                    if (!ghost) {
+                        state.actorID = 0xFFFFFFFF; // Engine already freed it (stage transition)
                     }
                 }
             } else {
                 if (state.actorID != 0xFFFFFFFF) {
                     fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
-                    if (ghost) fopAcM_delete(ghost);
+                    // BUG 5 FIX: Type guard before visibility-cull delete
+                    if (ghost && daGhostPlayer_c::sProcName != -1 &&
+                        fpcM_GetProfName(ghost) == static_cast<u16>(daGhostPlayer_c::sProcName)) {
+                        fopAcM_delete(ghost);
+                    }
                     state.actorID = 0xFFFFFFFF;
                 }
             }
@@ -215,17 +290,3 @@ void PlayerSync::UpdateAllRemotePlayers() {
     }
 }
 
-void PlayerSync::RenderPlayerParticle(uint8_t playerID, RemotePlayerState& state) {
-    if (!state.hasData || state.actorID == 0xFFFFFFFF) return;
-    
-    fopAc_ac_c* ghost = fopAcM_SearchByID(state.actorID);
-    if (ghost) {
-        ghost->current.pos.x = state.renderX;
-        ghost->current.pos.y = state.renderY;
-        ghost->current.pos.z = state.renderZ;
-        ghost->current.angle.y = (s16)state.renderRotY;
-        ghost->shape_angle.y = (s16)state.renderRotY;
-    }
-}
-
-void PlayerSync::CreateRemoteModelIfNeeded(fopAc_ac_c* alink) { }

@@ -13,7 +13,13 @@ Client::~Client() {
 }
 
 bool Client::Connect(const std::string& hostName, uint16_t port) {
+    if (m_connected || m_peer) {
+        return true;
+    }
+
     // Create the ENet host (client mode: 1 outgoing connection, 2 channels)
+    // Channel 0: reliable/ordered — control packets, status
+    // Channel 1: unreliable/unsequenced — high-frequency position updates
     if (!m_client) {
         m_client = enet_host_create(nullptr, 1, 2, 0, 0);
         if (!m_client) {
@@ -33,19 +39,7 @@ bool Client::Connect(const std::string& hostName, uint16_t port) {
     // Increase timeout to 60 seconds to survive long map loading screens
     // without getting disconnected by ENet's default timeout.
     enet_peer_timeout(m_peer, 0, 0, 60000);
-
-    // Wait briefly for the connection handshake to complete.
-    // 100ms is enough for localhost; remote servers may need the
-    // auto-reconnect logic in main.cpp to retry.
-    ENetEvent event;
-    if (enet_host_service(m_client, &event, 100) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
-        m_connected = true;
-        return true;
-    }
-
-    enet_peer_reset(m_peer);
-    m_peer = nullptr;
-    return false;
+    return true;
 }
 
 void Client::Disconnect() {
@@ -79,6 +73,9 @@ std::vector<std::vector<uint8_t>> Client::Update() {
     // Non-blocking poll (timeout = 0): process all queued events
     while (enet_host_service(m_client, &event, 0) > 0) {
         switch (event.type) {
+            case ENET_EVENT_TYPE_CONNECT:
+                m_connected = true;
+                break;
             case ENET_EVENT_TYPE_RECEIVE: {
                 std::vector<uint8_t> data(
                     event.packet->data,
@@ -102,13 +99,25 @@ std::vector<std::vector<uint8_t>> Client::Update() {
 void Client::Send(const std::vector<uint8_t>& data) {
     if (!m_connected || !m_peer) return;
 
-    // Use RELIABLE flag for all game-state packets.
-    // For high-frequency position updates, UNRELIABLE would reduce latency,
-    // but RELIABLE ensures no dropped state during network hiccups.
+    // Reliable, ordered channel 0 — for control messages and status updates.
     ENetPacket* packet = enet_packet_create(data.data(), data.size(), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(m_peer, 0, packet);
 }
 
+void Client::SendUnreliable(const std::vector<uint8_t>& data) {
+    if (!m_connected || !m_peer) return;
+
+    // Unsequenced, unreliable channel 1 — for high-frequency position updates.
+    // A dropped position frame is invisible thanks to LERP interpolation; a stalled
+    // reliable retransmit queue on channel 0 would cause visible jitter spikes.
+    ENetPacket* packet = enet_packet_create(data.data(), data.size(), ENET_PACKET_FLAG_UNSEQUENCED);
+    enet_peer_send(m_peer, 1, packet);
+}
+
 bool Client::IsConnected() const {
     return m_connected;
+}
+
+bool Client::IsConnecting() const {
+    return (m_peer != nullptr && !m_connected);
 }
